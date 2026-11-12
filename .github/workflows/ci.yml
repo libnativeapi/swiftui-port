@@ -75,7 +75,7 @@ jobs:
         run: |
           dbus-run-session -- \
             xvfb-run -a -s "-screen 0 1024x768x24" \
-            .build/debug/Counter --smoke
+            swift run Counter --smoke
 
       - name: Capture a Linux screenshot
         run: |
@@ -134,13 +134,12 @@ jobs:
           }
           Get-Item $link | Format-List FullName,Attributes,LinkType,Target
 
-      # The runner's MSVC 14.51 STL requires Clang 20 or newer, which Swift
-      # 6.0's Clang 17 cannot satisfy. Swift 6.2 is still language mode 5 for
-      # this package; update-sdk-modules keeps the SDK maps compatible.
+      # The runner's MSVC 14.51 STL requires Clang 20 or newer. Swift 6.3
+      # ships a new enough Clang; this package stays in language mode 5.
       - uses: compnerd/gha-setup-swift@main
         with:
-          swift-version: swift-6.2.1-release
-          swift-build: 6.2.1-RELEASE
+          swift-version: swift-6.3.1-release
+          swift-build: 6.3.1-RELEASE
           update-sdk-modules: true
 
       - name: Show Swift version
@@ -153,4 +152,4 @@ jobs:
         run: swift test
 
       - name: Smoke test
-        run: .\.build\debug\Counter.exe --smoke
+        run: swift run Counter --smoke

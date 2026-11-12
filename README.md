@@ -44,6 +44,16 @@ struct CounterView: View {
 That program is checked in as [`Examples/Counter`](Examples/Counter/CounterApp.swift)
 and is the CI smoke target: `swift run Counter`.
 
+## Screenshot
+
+Counter on Linux (GTK 3 under Xvfb, captured by CI):
+
+![Counter on Linux](docs/counter-linux.png)
+
+The controls are GTK's, not SwiftUI's. See
+[docs/DIVERGENCES.md](docs/DIVERGENCES.md) before comparing it to a SwiftUI
+screenshot.
+
 ## What this is
 
 The engine keeps SwiftUI's authoring model — a `View` protocol with `body`,
@@ -72,7 +82,10 @@ before judging a screenshot against SwiftUI.
 
 ## Requirements
 
-- Swift 6.0 toolchain, language mode 5 (`swift-tools-version:5.9`).
+- Swift 6.0 toolchain, language mode 5 (`swift-tools-version:5.9`). The
+  current Windows runners ship Visual Studio 2026 / MSVC 14.51, whose STL
+  requires Clang 20 or newer; the Windows CI therefore installs Swift 6.3.
+  The package itself remains in language mode 5.
 - A [nativeapi](https://github.com/libnativeapi/nativeapi) checkout with the
   Swift binding's platform support. The package consumes it as a **sibling path
   dependency** at `../nativeapi/bindings/swift`:
@@ -112,7 +125,8 @@ swift run Counter
 
 `swift run Counter --smoke` opens the window and asks the application to quit a
 few seconds later; CI uses it to prove the window, event loop and renderer
-start. The window can also be closed normally.
+start. The window can also be closed normally. `--smoke` is handled by the
+runner, so any app built with this port gets the same CI hook.
 
 ## Repository layout
 
