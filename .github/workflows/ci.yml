@@ -94,7 +94,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: counter-linux-screenshot
-          path: artifacts/counter-linux.png
+          path: swiftui-port/artifacts/counter-linux.png
+          retention-days: 7
           if-no-files-found: error
 
   windows:
@@ -133,12 +134,13 @@ jobs:
           }
           Get-Item $link | Format-List FullName,Attributes,LinkType,Target
 
-      # Swift 6.0.3's SDK module maps predate the runner's Windows SDK
-      # 10.0.26100; update-sdk-modules keeps the selected toolchain usable.
+      # The runner's MSVC 14.51 STL requires Clang 20 or newer, which Swift
+      # 6.0's Clang 17 cannot satisfy. Swift 6.2 is still language mode 5 for
+      # this package; update-sdk-modules keeps the SDK maps compatible.
       - uses: compnerd/gha-setup-swift@main
         with:
-          swift-version: swift-6.0.3-release
-          swift-build: 6.0.3-RELEASE
+          swift-version: swift-6.2.1-release
+          swift-build: 6.2.1-RELEASE
           update-sdk-modules: true
 
       - name: Show Swift version
