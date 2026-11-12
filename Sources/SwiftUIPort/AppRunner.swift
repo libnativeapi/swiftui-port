@@ -13,6 +13,13 @@ public func runApp<A: App>(_ app: A) {
     fatalError("SwiftUIPort v0.1 requires WindowGroup as the top-level Scene")
   }
 
+  // Touching the application singleton runs the platform initialization
+  // (gtk_init on Linux, COM/UI-thread setup on Windows) before the first window
+  // is created. Creating a GTK window before that fails with "No display
+  // available".
+  let application = NativeAPI.Application.shared
+  _ = application.isRunning()
+
   guard let window = NativeAPI.Window.create() else {
     fatalError("nativeapi failed to create a window")
   }
@@ -43,7 +50,7 @@ public func runApp<A: App>(_ app: A) {
     startSmokeTimer()
   }
 
-  _ = NativeAPI.Application.shared.runWithWindow(window)
+  _ = application.runWithWindow(window)
 }
 
 /// `--smoke` opens the window and asks the application to quit a few seconds
