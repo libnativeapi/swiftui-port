@@ -30,8 +30,11 @@ public final class NativeViewBackend: RenderBackend {
     self.window = window
     self.contentView = contentView
     self.windowListener = window.addListener { [weak self] event in
-      guard case .resized(_, let newSize) = event else { return }
-      self?.onResize?(SwiftUIRuntime.Size(width: newSize.width, height: newSize.height))
+      guard case .resized = event, let self else { return }
+      // The event payload is the frame size (decorations included); the
+      // renderer lays out the content area, so read that instead.
+      let content = self.window.contentSize
+      self.onResize?(SwiftUIRuntime.Size(width: content.width, height: content.height))
     }
   }
 

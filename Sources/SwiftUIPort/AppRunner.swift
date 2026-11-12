@@ -46,6 +46,16 @@ public func runApp<A: App>(_ app: A) {
   renderer.mount()
   window.show()
 
+  // A tiling compositor may size the window after the first map. Pick up the
+  // actual content area once it exists; later resizes arrive through the
+  // window listener.
+  let shownSize = window.contentSize
+  if shownSize.width > 0, shownSize.height > 0 {
+    renderer.resize(
+      to: SwiftUIRuntime.Size(width: shownSize.width, height: shownSize.height)
+    )
+  }
+
   if CommandLine.arguments.contains("--smoke") {
     startSmokeTimer()
   }
