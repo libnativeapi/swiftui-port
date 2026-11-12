@@ -106,6 +106,11 @@ public final class NativeViewBackend: RenderBackend {
   }
 
   private func update(view: NativeAPI.View, kind: ElementKind, props: NodeProps, id: NodeID) {
+    let previous = propsByID[id]
+    // Publish the new props before alignment is propagated to children, so a
+    // stack alignment change takes effect in the same update.
+    propsByID[id] = props
+
     view.setVisible(props.visible)
     view.setEnabled(props.enabled)
     view.setBackgroundColor(props.background?.nativeColor ?? NativeAPI.Color.transparent)
@@ -114,6 +119,10 @@ public final class NativeViewBackend: RenderBackend {
       view.setPreferredSize(
         NativeAPI.Size(width: props.frameWidth ?? 0, height: props.frameHeight ?? 0)
       )
+    } else if previous?.frameWidth != nil || previous?.frameHeight != nil {
+      // nativeapi treats 0 as "use the intrinsic size", which is how a
+      // removed .frame modifier is undone.
+      view.setPreferredSize(NativeAPI.Size(width: 0, height: 0))
     }
 
     switch kind {
@@ -122,6 +131,10 @@ public final class NativeViewBackend: RenderBackend {
       label.setText(props.text)
       if let foreground = props.foreground {
         label.setTextColor(foreground.nativeColor)
+      } else if previous?.foreground != nil {
+        // There is no "restore platform default" API; black is the neutral
+        // fallback when a previously colored Text loses its color.
+        label.setTextColor(.black)
       }
     case .button:
       // nativeapi's Button exposes text but not a text color; .foregroundColor
