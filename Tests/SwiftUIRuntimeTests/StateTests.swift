@@ -31,6 +31,19 @@ private struct BindingParent: View {
   }
 }
 
+private struct ToggleView: View {
+  @State var showExtra = false
+
+  var body: some View {
+    VStack(spacing: 0) {
+      Button("Toggle") { showExtra.toggle() }
+      if showExtra {
+        Text("Extra")
+      }
+    }
+  }
+}
+
 final class StateTests: XCTestCase {
   override func setUp() {
     super.setUp()
@@ -119,25 +132,27 @@ final class StateTests: XCTestCase {
   }
 
   func testConditionalContentInsertsAndRemoves() {
-    struct Conditional: View {
-      let show: Bool
-      var body: some View {
-        VStack(spacing: 0) {
-          Text("always")
-          if show {
-            Text("sometimes")
-          }
-        }
-      }
-    }
-
     let backend = FakeBackend()
     let renderer = Renderer(
       backend: backend,
-      root: AnyView(Conditional(show: false)),
+      root: AnyView(ToggleView()),
       size: Size(width: 100, height: 100)
     )
     renderer.mount()
-    XCTAssertNil(findNode(in: renderer.tree!, text: "sometimes"))
+    XCTAssertNil(findNode(in: renderer.tree!, text: "Extra"))
+
+    guard let button = findNode(in: renderer.tree!, kind: .button) else {
+      return XCTFail("expected a toggle button")
+    }
+
+    backend.tap(button.id)
+    XCTAssertNotNil(findNode(in: renderer.tree!, text: "Extra"))
+    XCTAssertEqual(count(renderer.lastCommands, where: \.isCreate), 1)
+    XCTAssertEqual(count(renderer.lastCommands, where: \.isRemove), 0)
+
+    backend.tap(button.id)
+    XCTAssertNil(findNode(in: renderer.tree!, text: "Extra"))
+    XCTAssertEqual(count(renderer.lastCommands, where: \.isRemove), 1)
+    XCTAssertEqual(count(renderer.lastCommands, where: \.isCreate), 0)
   }
 }
