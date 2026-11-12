@@ -262,6 +262,18 @@ public final class NativeViewBackend: RenderBackend {
     if let alignment {
       childView.setAlignment(alignment)
     }
+
+    // A container inside a padding wrapper is the content of that wrapper. Give
+    // it the wrapper's leftover space so a root VStack fills the window instead
+    // of shrinking to its intrinsic height.
+    if case .padding = parentKind {
+      switch kinds[childID] {
+      case .container, .padding:
+        childView.setFlex(1)
+      default:
+        break
+      }
+    }
   }
 
   private func applyAlignmentToChildren(parent: NodeID) {
