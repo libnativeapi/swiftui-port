@@ -32,7 +32,7 @@ platform controls.
 ```
 
 - **SwiftUIRuntime** is platform independent and imports no native API. It can
-  be built and tested on macOS, where it is the only target in the package.
+  be built and tested on macOS without nativeapi.
 - **SwiftUIPort** imports `NativeAPI`, owns the window and application loop, and
   implements the one real backend.
 - **SwiftUI** is the facade. On Windows and Linux it exports both lower modules
@@ -41,6 +41,10 @@ platform controls.
 - `SwiftUIPort` and `SwiftUI` are declared behind `#if !os(macOS)` in
   `Package.swift`; the dependency on the nativeapi Swift package is declared in
   the same condition.
+- `Counter` is declared on every platform. On macOS it has no package
+  dependency and imports Apple's SwiftUI, so `swift run Counter` demonstrates the
+  same example with the system framework. On Windows and Linux it depends on the
+  port's `SwiftUI` facade.
 
 ## A render pass
 
@@ -217,6 +221,6 @@ smoke test exercises the real event loop rather than a special headless path.
 - `COMPATTests`: scans `docs/COMPAT.md` and the sources so the compatibility
   table cannot silently drift from the code.
 
-The tests use `FakeBackend`, never a real window. macOS CI runs exactly this
-suite; Linux and Windows additionally build the backend and run the Counter
-smoke test.
+The tests use `FakeBackend`, never a real window. macOS CI runs this suite and
+builds `Counter` against Apple's SwiftUI (without launching the GUI); Linux and
+Windows additionally build the port's backend and run the Counter smoke test.

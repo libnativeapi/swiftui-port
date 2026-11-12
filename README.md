@@ -41,8 +41,9 @@ struct CounterView: View {
 }
 ```
 
-That program is checked in as [`Examples/Counter`](Examples/Counter/CounterApp.swift)
-and is the CI smoke target: `swift run Counter`.
+That program is checked in as [`Examples/Counter`](Examples/Counter/CounterApp.swift).
+On Windows and Linux it is the CI smoke target; on macOS the same source compiles
+against Apple's SwiftUI.
 
 ## What this is
 
@@ -88,8 +89,9 @@ before judging a screenshot against SwiftUI.
 
   The Swift binding's Linux/Windows support landed in
   [libnativeapi/nativeapi#33](https://github.com/libnativeapi/nativeapi/pull/33),
-  so a current `main` checkout is enough. macOS only builds `SwiftUIRuntime`
-  and does not need nativeapi.
+  so a current `main` checkout is enough. macOS builds `SwiftUIRuntime` for its
+  tests and the Counter example against Apple's SwiftUI; it does not need
+  nativeapi.
 - Linux: `pkg-config`, `libgtk-3-dev`, `libx11-dev`, `libxi-dev` (the binding
   gets its flags from pkg-config; no `unsafeFlags`).
 - Windows: the official Swift toolchain with the Visual Studio build tools the
@@ -97,12 +99,15 @@ before judging a screenshot against SwiftUI.
 
 ## Build and test
 
-macOS builds only the platform-independent engine, so the whole test suite can
-run without opening a window:
+macOS builds the platform-independent engine for its test suite, and builds the
+Counter example against **Apple's SwiftUI** (the port's own `SwiftUI` facade is
+not built there). The test suite needs no window; `swift run Counter` opens a
+normal SwiftUI window:
 
 ```bash
 swift build
 swift test
+swift run Counter
 ```
 
 Linux and Windows build the engine, the nativeapi backend and the example:
@@ -113,10 +118,10 @@ swift test
 swift run Counter
 ```
 
-`swift run Counter --smoke` opens the window and asks the application to quit a
-few seconds later; CI uses it to prove the window, event loop and renderer
-start. The window can also be closed normally. `--smoke` is handled by the
-runner, so any app built with this port gets the same CI hook.
+On Windows and Linux, `swift run Counter --smoke` opens the window and asks the
+port's runner to quit a few seconds later; CI uses it to prove the window, event
+loop and renderer start. The window can also be closed normally. macOS runs the
+example under Apple's SwiftUI, where the flag has no special meaning.
 
 ## Repository layout
 
@@ -130,8 +135,9 @@ docs/                     architecture, compatibility, divergences
 ```
 
 `SwiftUI` and `SwiftUIPort` are declared only off macOS. A package module cannot
-shadow Apple's SwiftUI, so the macOS build stops at `SwiftUIRuntime` and its
-tests.
+shadow Apple's SwiftUI, so the port's facade is absent there. The `Counter`
+example is declared on every platform: on macOS it compiles against Apple's
+SwiftUI, and on Windows/Linux it compiles against the port's facade.
 
 ## Design in one paragraph
 

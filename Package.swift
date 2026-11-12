@@ -11,8 +11,9 @@ import PackageDescription
 //   SwiftUI         the user-facing facade (`import SwiftUI`).
 //
 // SwiftUI and SwiftUIPort are only declared off macOS: macOS already ships a
-// module named SwiftUI, and a package module may not shadow it. The macOS build
-// therefore contains SwiftUIRuntime and its tests only.
+// module named SwiftUI, and a package module may not shadow it. On macOS the
+// build contains SwiftUIRuntime, its tests, and the Counter example compiled
+// against Apple's SwiftUI, so `swift run Counter` opens a normal SwiftUI window.
 //
 // The nativeapi Swift package is consumed as a sibling checkout at
 // ../nativeapi/bindings/swift (see README "Requirements"). It is intentionally
@@ -43,13 +44,22 @@ targets += [
     name: "SwiftUI",
     dependencies: ["SwiftUIRuntime", "SwiftUIPort"]
   ),
-  .executableTarget(
-    name: "Counter",
-    dependencies: ["SwiftUI"],
-    path: "Examples/Counter"
-  ),
 ]
 #endif
+
+#if os(macOS)
+let counterDependencies: [Target.Dependency] = []
+#else
+let counterDependencies: [Target.Dependency] = ["SwiftUI"]
+#endif
+
+targets.append(
+  .executableTarget(
+    name: "Counter",
+    dependencies: counterDependencies,
+    path: "Examples/Counter"
+  )
+)
 
 targets.append(
   .testTarget(
@@ -68,6 +78,8 @@ products += [
   .library(name: "SwiftUI", targets: ["SwiftUI"]),
 ]
 #endif
+
+products.append(.executable(name: "Counter", targets: ["Counter"]))
 
 let package = Package(
   name: "SwiftUIPort",

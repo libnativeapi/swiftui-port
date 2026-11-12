@@ -16,7 +16,7 @@ env:
 
 jobs:
   runtime-macos:
-    name: runtime (macOS)
+    name: engine and example (macOS)
     runs-on: macos-latest
     defaults:
       run:
@@ -29,7 +29,9 @@ jobs:
       - name: Show Swift version
         run: swift --version
 
-      - name: Build SwiftUIRuntime
+      # Counter has no package dependencies on macOS: it imports Apple's
+      # SwiftUI, so this also proves `swift run Counter` compiles.
+      - name: Build SwiftUIRuntime and Counter
         run: swift build
 
       - name: Test SwiftUIRuntime
