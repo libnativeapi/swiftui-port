@@ -64,8 +64,9 @@ before judging a screenshot against SwiftUI.
 
 - Not a reimplementation of SwiftUI's renderer, layout system or animation.
 - Not a source-level port: no Apple SwiftUI code is used or copied.
-- Not a macOS target. macOS already has SwiftUI; this project targets Windows
-  and Linux.
+- Not a macOS port. macOS already has SwiftUI; the port itself targets Windows
+  and Linux. The Counter example still builds on macOS, against Apple's SwiftUI,
+  as the same-source reference.
 - Not an embedded web view or a Flutter-like render engine. Real platform
   controls are used.
 - Not a complete SwiftUI. The v0.1 symbol set is in
