@@ -1,0 +1,79 @@
+// swift-tools-version:5.9
+import PackageDescription
+
+// SwiftUIPort — a declarative SwiftUI-shaped API over nativeapi's native views.
+// Unofficial; not affiliated with Apple.
+//
+// The package has three layers:
+//   SwiftUIRuntime  engine: view protocol, element tree, layout, diff, state.
+//                   No nativeapi dependency, so it builds and tests on macOS.
+//   SwiftUIPort     the nativeapi backend and app/window integration.
+//   SwiftUI         the user-facing facade (`import SwiftUI`).
+//
+// SwiftUI and SwiftUIPort are only declared off macOS: macOS already ships a
+// module named SwiftUI, and a package module may not shadow it. The macOS build
+// therefore contains SwiftUIRuntime and its tests only.
+//
+// The nativeapi Swift package is consumed as a sibling checkout at
+// ../nativeapi/bindings/swift (see README "Requirements"). It is intentionally
+// a path dependency: this project is not published to a package registry.
+
+#if os(macOS)
+let packageDependencies: [Package.Dependency] = []
+#else
+let packageDependencies: [Package.Dependency] = [
+  .package(name: "NativeAPI", path: "../nativeapi/bindings/swift")
+]
+#endif
+
+var targets: [Target] = [
+  .target(name: "SwiftUIRuntime")
+]
+
+#if !os(macOS)
+targets += [
+  .target(
+    name: "SwiftUIPort",
+    dependencies: [
+      "SwiftUIRuntime",
+      .product(name: "NativeAPI", package: "NativeAPI"),
+    ]
+  ),
+  .target(
+    name: "SwiftUI",
+    dependencies: ["SwiftUIRuntime", "SwiftUIPort"]
+  ),
+  .executableTarget(
+    name: "Counter",
+    dependencies: ["SwiftUI"],
+    path: "Examples/Counter"
+  ),
+]
+#endif
+
+targets.append(
+  .testTarget(
+    name: "SwiftUIRuntimeTests",
+    dependencies: ["SwiftUIRuntime"]
+  )
+)
+
+var products: [Product] = [
+  .library(name: "SwiftUIRuntime", targets: ["SwiftUIRuntime"])
+]
+
+#if !os(macOS)
+products += [
+  .library(name: "SwiftUIPort", targets: ["SwiftUIPort"]),
+  .library(name: "SwiftUI", targets: ["SwiftUI"]),
+]
+#endif
+
+let package = Package(
+  name: "SwiftUIPort",
+  platforms: [.macOS(.v11)],
+  products: products,
+  dependencies: packageDependencies,
+  targets: targets,
+  cxxLanguageStandard: .cxx17
+)
