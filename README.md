@@ -96,10 +96,10 @@ before judging a screenshot against SwiftUI.
   └── swiftui-port/
   ```
 
-  The platform support is currently proposed in
-  [libnativeapi/nativeapi#33](https://github.com/libnativeapi/nativeapi/pull/33).
-  Until that lands, check out the `swift-desktop-platforms` branch there.
-  macOS only builds `SwiftUIRuntime` and does not need nativeapi.
+  The Swift binding's Linux/Windows support landed in
+  [libnativeapi/nativeapi#33](https://github.com/libnativeapi/nativeapi/pull/33),
+  so a current `main` checkout is enough. macOS only builds `SwiftUIRuntime`
+  and does not need nativeapi.
 - Linux: `pkg-config`, `libgtk-3-dev`, `libx11-dev`, `libxi-dev` (the binding
   gets its flags from pkg-config; no `unsafeFlags`).
 - Windows: the official Swift toolchain with the Visual Studio build tools the

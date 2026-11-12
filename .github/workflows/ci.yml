@@ -8,11 +8,11 @@ on:
 permissions:
   contents: read
 
-# The nativeapi Swift binding needs the platform support proposed in
-# libnativeapi/nativeapi#33. Point NATIVEAPI_REF at main once that PR merges.
+# The nativeapi Swift binding carries Linux/Windows support on main
+# (libnativeapi/nativeapi#33).
 env:
   NATIVEAPI_REPOSITORY: libnativeapi/nativeapi
-  NATIVEAPI_REF: swift-desktop-platforms
+  NATIVEAPI_REF: main
 
 jobs:
   runtime-macos:
