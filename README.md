@@ -44,16 +44,6 @@ struct CounterView: View {
 That program is checked in as [`Examples/Counter`](Examples/Counter/CounterApp.swift)
 and is the CI smoke target: `swift run Counter`.
 
-## Screenshot
-
-Counter on Linux (GTK 3 under Xvfb, captured by CI):
-
-![Counter on Linux](docs/counter-linux.png)
-
-The controls are GTK's, not SwiftUI's. See
-[docs/DIVERGENCES.md](docs/DIVERGENCES.md) before comparing it to a SwiftUI
-screenshot.
-
 ## What this is
 
 The engine keeps SwiftUI's authoring model — a `View` protocol with `body`,

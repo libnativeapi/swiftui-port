@@ -62,8 +62,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            pkg-config libgtk-3-dev libx11-dev libxi-dev xvfb dbus \
-            openbox scrot
+            pkg-config libgtk-3-dev libx11-dev libxi-dev xvfb dbus
 
       - name: Build
         run: swift build
@@ -76,27 +75,6 @@ jobs:
           dbus-run-session -- \
             xvfb-run -a -s "-screen 0 1024x768x24" \
             swift run Counter --smoke
-
-      - name: Capture a Linux screenshot
-        run: |
-          mkdir -p artifacts
-          dbus-run-session -- xvfb-run -a -s "-screen 0 1024x768x24" bash -euo pipefail -c '
-            openbox >/tmp/openbox.log 2>&1 &
-            sleep 1
-            .build/debug/Counter --smoke &
-            app=$!
-            sleep 1
-            scrot -o /tmp/counter-linux.png
-            wait "$app"
-          '
-          cp /tmp/counter-linux.png artifacts/counter-linux.png
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: counter-linux-screenshot
-          path: swiftui-port/artifacts/counter-linux.png
-          retention-days: 7
-          if-no-files-found: error
 
   windows:
     name: build and smoke (Windows)
