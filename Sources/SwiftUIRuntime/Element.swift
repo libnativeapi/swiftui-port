@@ -50,7 +50,7 @@ public struct NodeID: Hashable, Comparable, CustomStringConvertible {
 
   public var description: String { "#\(rawValue)" }
 }
-public enum ElementKind: Equatable, CustomStringConvertible {
+public enum ElementKind: Hashable, CustomStringConvertible {
   /// A transparent fragment produced by a multi-child builder block. It never
   /// reaches a backend; containers flatten it away.
   case fragment
@@ -263,7 +263,7 @@ public struct Element {
 enum ElementKey: Hashable {
   case root
   case explicit(AnyHashable)
-  case structural(String, Int)
+  case structural(ElementKind, Int)
 }
 func normalize(_ element: Element, previous: Element? = nil) -> Element {
   if let previous, element.evaluationID != 0,
@@ -281,18 +281,19 @@ func normalize(_ element: Element, previous: Element? = nil) -> Element {
     }
     return result
   }
-  result.children = result.children.enumerated().flatMap { index, child -> [Element] in
+  if result.children.isEmpty && element.kind != .fragment { return result }
+  var children: [Element] = []
+  children.reserveCapacity(element.children.count)
+  for (index, child) in element.children.enumerated() {
     let normalized = normalize(
       child, previous: previous.flatMap { index < $0.children.count ? $0.children[index] : nil })
     switch normalized.kind {
-    case .fragment:
-      return normalized.children
-    case .empty:
-      return []
-    default:
-      return [normalized]
+    case .fragment: children.append(contentsOf: normalized.children)
+    case .empty: break
+    default: children.append(normalized)
     }
   }
+  result.children = children
   if result.kind == .fragment {
     switch result.children.count {
     case 0:
@@ -310,13 +311,9 @@ func normalize(_ element: Element, previous: Element? = nil) -> Element {
 func assignKeys(_ element: inout Element, index: Int = 0) {
   let expected: ElementKey =
     element.explicitID.map(ElementKey.explicit)
-    ?? .structural(element.kind.identityName, index)
+    ?? .structural(element.kind, index)
   if element.reusesLayout && element.key == expected { return }
-  if let explicitID = element.explicitID {
-    element.key = .explicit(explicitID)
-  } else {
-    element.key = .structural(element.kind.identityName, index)
-  }
+  element.key = expected
   for childIndex in element.children.indices {
     assignKeys(&element.children[childIndex], index: childIndex)
   }

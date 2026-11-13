@@ -21,13 +21,14 @@ import Foundation
   public let layoutEngine: LayoutEngine
 
   private let root: AnyView
+  private let rootPath = ViewPath()
   private var allocator = NodeIDAllocator()
   private var mounted: Element?
   private var normalized: Element?
-  private var actions: [NodeID: () -> Void] = [:]
   private var hoverActions: [NodeID: (Bool) -> Void] = [:]
   private var isRendering = false
   private var needsRender = false
+  private var pendingAnimation: Animation?
   private var transactionDepth = 0
   private let evaluations = EvaluationGraph()
   private var contentSize: Size
@@ -91,7 +92,7 @@ import Foundation
 
     isRendering = true
     let newTree = buildTree()
-    var commands: [RenderCommand] = []
+    var commands: [RenderCommand]? = backend.needsRenderCommands ? [] : nil
     let mountedTree = createSubtree(
       newTree,
       parent: nil,
@@ -102,8 +103,8 @@ import Foundation
     mounted = mountedTree
     tree = mountedTree
     rebuildActions(from: mountedTree)
-    lastCommands = commands
-    backend.perform(commands)
+    lastCommands = commands ?? []
+    if let commands { backend.perform(commands) }
     backend.didRender(mountedTree)
     LifecycleRegistry.shared.commit()
     isRendering = false
@@ -129,6 +130,7 @@ import Foundation
     scheduleRender()
   }
   private func scheduleRender() {
+    if let animation = AnimationContext.current { pendingAnimation = animation }
     needsRender = true
     if isRendering || transactionDepth > 0 { return }
     requestRender()
@@ -177,7 +179,7 @@ import Foundation
     guard let node = find(id, in: tree), node.props.enabled, node.props.visible,
       node.props.hitTesting
     else { return }
-    actions[id]?()
+    node.action?()
   }
 
   public enum Interaction {
@@ -243,7 +245,7 @@ import Foundation
   /// Platform-neutral input dispatch. Coordinates are logical points in the root.
   @discardableResult public func input(
     id: NodeID? = nil, event: Int, point: CGPoint = .zero, value: Int = 0,
-    modifiers: EventModifiers = [], text: String = ""
+    modifiers: EventModifiers = [], text: String = "", updatesPressedState: Bool = false
   ) -> Bool {
     transactionDepth += 1
     defer { finishTransaction() }
@@ -284,6 +286,7 @@ import Foundation
     }
     if event == 2 {
       pointerDown = chain.first(where: { $0.action != nil })?.id
+      if updatesPressedState, let pointerDown { interact(pointerDown, .pressed(true)) }
       if let node = chain.first(where: { $0.dragAction != nil }) {
         dragging = (node.id, point, CGPoint(x: node.frame.minX, y: node.frame.minY))
       }
@@ -291,6 +294,9 @@ import Foundation
         focused = node.id
         interact(node.id, .focus(true))
       }
+    }
+    if event == 3, updatesPressedState, let pointerDown {
+      interact(pointerDown, .pressed(false))
     }
     if event == 1 || event == 2 || event == 3, let drag = dragging {
       let location = CGPoint(x: point.x - drag.origin.x, y: point.y - drag.origin.y)
@@ -445,7 +451,7 @@ import Foundation
   private func updateScroll() -> Bool {
     guard let pending = pendingScroll, var updated = mounted else { return false }
     pendingScroll = nil
-    var commands: [RenderCommand] = []
+    var commands: [RenderCommand]? = backend.needsRenderCommands ? [] : nil
     let started = Date.timeIntervalSinceReferenceDate
     func translate(
       _ node: inout Element, dx: Double, dy: Double,
@@ -464,7 +470,7 @@ import Foundation
         snapshot.rect.origin = CGPoint(x: node.frame.minX, y: node.frame.minY)
         snapshot.namedOrigins = childOrigins
       }
-      commands.append(.setFrame(id: node.id, frame: node.frame))
+      commands?.append(.setFrame(id: node.id, frame: node.frame))
       for i in node.children.indices {
         translate(&node.children[i], dx: dx, dy: dy, origins: childOrigins)
       }
@@ -474,7 +480,7 @@ import Foundation
         let old = node.props.scrollOffset
         node.props.scrollOffset = pending.offset
         node.reusesLayout = false
-        commands.append(.setProps(id: node.id, props: node.props))
+        commands?.append(.setProps(id: node.id, props: node.props))
         var origins = node.layoutContext
         if let name = node.props.coordinateSpace {
           origins[name] = CGPoint(x: node.frame.minX, y: node.frame.minY)
@@ -495,13 +501,14 @@ import Foundation
       return false
     }
     guard move(&updated) else { return false }
+    pendingAnimation = nil
     isRendering = true
     mounted = updated
     tree = updated
-    lastCommands = commands
+    lastCommands = commands ?? []
     lastTimings = ["scroll.translate": (Date.timeIntervalSinceReferenceDate - started) * 1000]
     let published = Date.timeIntervalSinceReferenceDate
-    backend.perform(commands)
+    if let commands { backend.perform(commands) }
     backend.didScroll(updated)
     lastTimings["backend"] = (Date.timeIntervalSinceReferenceDate - published) * 1000
     isRendering = false
@@ -513,12 +520,15 @@ import Foundation
     var start = Date.timeIntervalSinceReferenceDate
     StateRegistry.shared.begin()
     LifecycleRegistry.shared.begin()
-    var element = evaluations.evaluateRoot { _render(root, path: []) }
+    var element = evaluations.evaluateRoot { _render(root, path: rootPath) }
     lastTimings["evaluate"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     start = Date.timeIntervalSinceReferenceDate
     element = normalize(element, previous: normalized)
     normalized = element
-    if let animation = AnimationContext.current { element.props.animation = animation }
+    if let animation = pendingAnimation ?? AnimationContext.current {
+      element.props.animation = animation
+    }
+    pendingAnimation = nil
     resolveEnvironment(&element, previous: mounted)
     lastTimings["environment"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     start = Date.timeIntervalSinceReferenceDate
@@ -544,7 +554,7 @@ import Foundation
     isRendering = true
     let newTree = buildTree()
     var start = Date.timeIntervalSinceReferenceDate
-    var commands: [RenderCommand] = []
+    var commands: [RenderCommand]? = backend.needsRenderCommands ? [] : nil
     let mountedTree = diffElement(
       old: old,
       new: newTree,
@@ -556,25 +566,22 @@ import Foundation
     mounted = mountedTree
     tree = mountedTree
     rebuildActions(from: mountedTree)
-    lastCommands = commands
+    lastCommands = commands ?? []
     lastTimings["diff"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     start = Date.timeIntervalSinceReferenceDate
-    backend.perform(commands)
+    if let commands { backend.perform(commands) }
     backend.didRender(mountedTree)
     lastTimings["backend"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     LifecycleRegistry.shared.commit()
     isRendering = false
   }
   private func rebuildActions(from element: Element) {
-    var collected: [NodeID: () -> Void] = [:]
     var hovered: [NodeID: (Bool) -> Void] = [:]
     func collect(_ node: Element) {
-      if let action = node.action { collected[node.id] = action }
       if let action = node.hoverAction { hovered[node.id] = action }
       node.children.forEach(collect)
     }
     collect(element)
-    actions = collected
     hoverActions = hovered
   }
 }

@@ -35,7 +35,7 @@ struct FontTransform<Content: View>: View, _PrimitiveView {
   let content: Content
   let transform: (Font) -> Font
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let old = EnvironmentValues.current
     EnvironmentValues.current.font = transform(old.font ?? .body)
     defer { EnvironmentValues.current = old }

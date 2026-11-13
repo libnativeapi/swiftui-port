@@ -26,8 +26,8 @@ styles; the compatibility layer implements only generic SwiftUI concepts.
    ObservableObject and untracked geometry-state writes invalidate conservatively.
 3. Normalize fragments, retain both slots of view layers, and resolve inherited foreground, disabled, visibility and alpha values.
 4. Compute layout, evaluate geometry children, hoist presentations, prune state
-   and assign sibling diff keys. Windows
-   supplies a native text measurer; deterministic metrics serve engine tests.
+   and assign sibling diff keys. The drawing backends supply native text
+   measurers; deterministic metrics serve engine tests.
 5. Diff against the mounted tree, retaining NodeIDs for matched elements.
    Keys are local to sibling lists; an unchanged sibling order uses a linear
    path without key dictionaries or move-list scans.
@@ -98,17 +98,22 @@ are unchanged by this drawing backend.
 
 ## Linux backend
 
-`NativeViewBackend` consumes incremental commands and maps stacks/padding to
-nativeapi row/column containers, Text to Label, and Button to Button. Native
-layout determines child frames; only the root reference frame is applied.
-Frames map to wrapper preferred sizes. Drawing-only nodes fail explicitly.
-The full limitations of both backends are in [DIVERGENCES.md](DIVERGENCES.md).
+`LinuxDrawingBackend` hosts a GTK drawing area in the nativeapi window. Cairo
+paints the shared tree, and Pango supplies text measurement and rendering.
+Retained GTK buttons and editors follow the shared layout, with GTK providing
+keyboard focus, activation, native text entry and AT-SPI names. Pointer and
+scroll events go through the runtime hit tester. GLib coalesces renders into
+an idle callback, services the Swift main queue and schedules animated redraws.
+See [DIVERGENCES.md](DIVERGENCES.md) for platform limits.
 
 ## State, layout and testing
 
 State uses a process-wide registry for one renderer. Bindings are get/set
 closures; focus bindings wrap State. Environment values are saved/restored
 around subtrees. `.id` and ForEach identifiers scope both diff identity and stored state.
+The runtime interns paths by parent and child key, keeping state lookups
+independent of view depth. Reevaluation retains subscriptions to state values
+the same view still reads.
 Published values invalidate the active renderer; StateObject initialization is lazy.
 Writes from one action or native notification batch are published together.
 ScrollView retains its stored content when only its internal offset changes.
@@ -119,7 +124,10 @@ Stack measurement sums main-axis sizes and takes the largest cross-axis size.
 Padding adds insets; frames constrain/alignment-place a child; layers measure
 the base view only. Flexible frames/spacers consume remaining proposed space.
 This is deliberately smaller than SwiftUI's layout system.
-Measurements are cached by proposal and sizing inputs. Placement snapshots copy
+Measurements are cached by proposal and sizing inputs. Wrapped text and its
+measured size share a cache across measurement and placement. Rebuilt
+GeometryReader content can keep layout identities when its sizing inputs match.
+Placement snapshots copy
 geometry into the new tree without replacing callbacks or visual properties.
 Unchanged evaluation revisions reuse mounted subtrees when inherited properties
 also match. Moving them translates their frames; resizing reflows them. Their
@@ -132,6 +140,9 @@ Readers of global/named positions re-evaluate when coordinates change, while
 escaped proxies keep current coordinates after cached translation. Obsolete
 layout cache entries are reclaimed every eight passes; changing the text
 measurer or fallback metrics clears them immediately.
+
+The Linux drawing backend consumes the reconciled tree directly. It skips
+incremental commands while preserving the mounted IDs used for native input.
 
 Integer-pixel scrolls can reuse the framebuffer's interior. The bridge verifies
 that visible paint commands and their clip stacks are exact translations, that

@@ -1,8 +1,51 @@
 /// State belongs to a mounted view/property, not the place its value was
 /// constructed. Two same-typed siblings therefore keep independent slots.
 
+/// Interns structural paths for the lifetime of the nodes and state using them.
+/// Child lookup is local to the parent, so StateKey never hashes a full path.
+final class ViewPath: Hashable {
+  private enum Component: Hashable {
+    case index(Int)
+    case id(AnyHashable)
+  }
+  private final class Child {
+    weak var path: ViewPath?
+    init(_ path: ViewPath) { self.path = path }
+  }
+  private let parent: ViewPath?
+  private let component: Component?
+  private var children: [Component: Child] = [:]
+
+  init() {
+    parent = nil
+    component = nil
+  }
+
+  private init(parent: ViewPath, component: Component) {
+    self.parent = parent
+    self.component = component
+  }
+
+  deinit {
+    if let component { parent?.children.removeValue(forKey: component) }
+  }
+
+  func appending(index: Int) -> ViewPath { child(.index(index)) }
+  func appending(id: AnyHashable) -> ViewPath { child(.id(id)) }
+
+  private func child(_ component: Component) -> ViewPath {
+    if let path = children[component]?.path { return path }
+    let path = ViewPath(parent: self, component: component)
+    children[component] = Child(path)
+    return path
+  }
+
+  static func == (lhs: ViewPath, rhs: ViewPath) -> Bool { lhs === rhs }
+  func hash(into hasher: inout Hasher) { hasher.combine(ObjectIdentifier(self)) }
+}
+
 struct StateKey: Hashable {
-  let path: [Int]
+  let path: ViewPath
   let owner: ObjectIdentifier
   let property: Int
 }
@@ -27,7 +70,6 @@ public final class StateRegistry {
     GeometrySnapshot.active?.state.formUnion(keys)
   }
   func end() { values = values.filter { live.contains($0.key) } }
-  func withScope<T>(_ scope: [Int], _ body: () -> T) -> T { body() }
   func install<Value>(_ key: StateKey, initial: Value) {
     EvaluationGraph.active?.installState(key)
     GeometrySnapshot.active?.state.insert(key)

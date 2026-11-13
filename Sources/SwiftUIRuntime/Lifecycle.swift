@@ -71,7 +71,7 @@ struct LifecycleView<Content: View, Value: Equatable>: View, _PrimitiveView {
   let disappear: (() -> Void)?
   let task: (() async -> Void)?
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     // Equatable values need not be Hashable. Keep a comparison snapshot without
     // publishing internal bookkeeping as an application state mutation.
     let key = StateKey(path: path, owner: ObjectIdentifier(Self.self), property: -1)
@@ -83,7 +83,7 @@ struct LifecycleView<Content: View, Value: Equatable>: View, _PrimitiveView {
     LifecycleRegistry.shared.register(
       key, value: version, appear: appear, change: { change?(value) }, disappear: disappear,
       task: task)
-    return _render(content, path: path + [0])
+    return _render(content, path: path.appending(index: 0))
   }
 }
 private final class LifecycleSnapshots {

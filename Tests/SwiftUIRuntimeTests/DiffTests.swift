@@ -11,15 +11,16 @@ final class DiffTests: XCTestCase {
       size: Size(width: 100, height: 100)
     )
     var allocator = NodeIDAllocator()
-    var commands: [RenderCommand] = []
+    var recorded: [RenderCommand]? = []
     let mounted = createSubtree(
       tree,
       parent: nil,
       index: 0,
-      commands: &commands,
+      commands: &recorded,
       allocator: &allocator
     )
 
+    let commands = recorded ?? []
     XCTAssertEqual(count(commands, where: \.isCreate), allNodes(mounted).count)
     XCTAssertEqual(count(commands, where: \.isInsert), allNodes(mounted).count)
     XCTAssertEqual(count(commands, where: \.isSetFrame), allNodes(mounted).count)

@@ -1,6 +1,10 @@
 import Foundation
 
 import NativeAPI
+#if os(Linux)
+  import CGTK3
+  import Glibc
+#endif
 
 /// Runs an app: create the native window, mount the scene's root view, and
 /// enter the platform application loop.
@@ -44,6 +48,11 @@ public func runApp<A: App>(_ app: A) {
       fatalError("Could not attach the Windows drawing backend")
     }
     let layout = LayoutEngine(textMeasurer: WindowsDrawingBackend.measureText)
+  #elseif os(Linux)
+    guard let backend = LinuxDrawingBackend(window: window) else {
+      fatalError("Could not attach the Linux drawing backend")
+    }
+    let layout = LayoutEngine(textMeasurer: backend.measureText)
   #else
     guard let backend = NativeViewBackend(window: window) else {
       fatalError("nativeapi window has no content view")
@@ -60,10 +69,16 @@ public func runApp<A: App>(_ app: A) {
   backend.onResize = { [weak renderer] size in
     renderer?.resize(to: size)
   }
-  #if os(Windows)
+  #if os(Windows) || os(Linux)
+    #if os(Linux)
+      let usesCanvasPressState = true
+    #else
+      let usesCanvasPressState = false
+    #endif
     backend.inputHandler = { [weak renderer] id, event, point, value, modifiers, text in
       renderer?.input(
-        id: id, event: event, point: point, value: value, modifiers: modifiers, text: text) ?? false
+        id: id, event: event, point: point, value: value, modifiers: modifiers, text: text,
+        updatesPressedState: usesCanvasPressState) ?? false
     }
     backend.interactionHandler = { [weak renderer] id, interaction in
       renderer?.interact(id, interaction)
@@ -87,7 +102,7 @@ public func runApp<A: App>(_ app: A) {
     }
   }
   window.show()
-  #if os(Windows)
+  #if os(Windows) || os(Linux)
     backend.focusInitialControl()
   #endif
 
@@ -105,13 +120,51 @@ public func runApp<A: App>(_ app: A) {
     startSmokeTimer()
   }
 
+  #if os(Linux)
+    let dispatchSource = watchMainDispatchQueue()
+    defer { if dispatchSource != 0 { g_source_remove(dispatchSource) } }
+  #endif
   withExtendedLifetime(renderer) { _ = application.runWithWindow(window) }
 }
+
+#if os(Linux)
+  // CoreFoundation's libdispatch bridge exposes the main queue's eventfd.
+  // Watching it from GLib lets Swift's MainActor run while GTK owns the loop.
+  private let drainMainDispatchQueue = dlsym(nil, "_dispatch_main_queue_callback_4CF").map {
+    unsafeBitCast($0, to: (@convention(c) (UnsafeMutableRawPointer?) -> Void).self)
+  }
+
+  private func watchMainDispatchQueue() -> UInt32 {
+    guard drainMainDispatchQueue != nil, let symbol = dlsym(nil, "_dispatch_get_main_queue_port_4CF")
+    else { return 0 }
+    let mainQueuePort = unsafeBitCast(symbol, to: (@convention(c) () -> Int32).self)
+    let descriptor = mainQueuePort()
+    guard descriptor >= 0, let channel = g_io_channel_unix_new(descriptor) else { return 0 }
+    defer { g_io_channel_unref(channel) }
+    return g_io_add_watch(channel, G_IO_IN, { channel, _, _ in
+      var wakeup: UInt64 = 0
+      let descriptor = g_io_channel_unix_get_fd(channel)
+      let size = MemoryLayout<UInt64>.size
+      var count: Int
+      repeat { count = read(descriptor, &wakeup, size) } while count < 0 && errno == EINTR
+      if count == size { drainMainDispatchQueue?(nil) }
+      return 1
+    }, nil)
+  }
+#endif
+
 private func startSmokeTimer() {
+  #if os(Linux)
+    g_timeout_add(3000, { _ in
+      NativeAPI.Application.shared.quit(0)
+      return 0
+    }, nil)
+  #else
   Thread.detachNewThread {
     Thread.sleep(forTimeInterval: 3)
     NativeAPI.Application.shared.quit(0)
   }
+  #endif
 }
 extension App {
   /// The `@main` entry point. `SwiftUI` re-exports this extension, so an app

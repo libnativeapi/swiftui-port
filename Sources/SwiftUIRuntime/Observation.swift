@@ -84,7 +84,7 @@ struct ObjectEnvironment<Content: View, Object: ObservableObject>: View, _Primit
   let content: Content
   let object: Object
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let old = EnvironmentValues.current
     EnvironmentValues.current.objects[ObjectIdentifier(Object.self)] = object
     defer { EnvironmentValues.current = old }

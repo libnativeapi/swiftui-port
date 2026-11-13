@@ -40,7 +40,7 @@ struct EnvironmentView<Content: View, Value>: View, _PrimitiveView {
   let keyPath: WritableKeyPath<EnvironmentValues, Value>
   let value: Value
   var body: Never { fatalError("EnvironmentView is primitive") }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let saved = EnvironmentValues.current
     EnvironmentValues.current[keyPath: keyPath] = value
     defer { EnvironmentValues.current = saved }

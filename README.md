@@ -48,16 +48,15 @@ against Apple's SwiftUI.
 ## What this is
 
 The engine keeps SwiftUI's authoring model: value views, builders, state,
-bindings, scoped environment, modifiers and WindowGroup. Windows adds generic
-text/shape/layer drawing on a nativeapi window, including custom ButtonStyle
-labels. Buttons retain native handles, activation, focus and accessible names.
-Linux retains the native label/button/stack backend.
+bindings, scoped environment, modifiers and WindowGroup. The Windows and
+Linux backends draw text, shapes and layers in a nativeapi window, including
+custom ButtonStyle labels. Native controls supply activation, focus,
+accessible names and text editing.
 
 This is a **partial compatibility layer**. It contains no host application's
 components, themes or tokens. It is not Apple's source or renderer, and does
-not promise pixel equality. Custom drawing currently requires Windows;
-the Windows backend supplies scrolling, vector images, native text editing,
-popovers, gestures and basic animation. It remains smaller than Apple SwiftUI.
+not promise pixel equality. Both drawing backends supply scrolling, vector
+images, native text editing, popovers, gestures and basic animation.
 Read [docs/COMPAT.md](docs/COMPAT.md) and
 [docs/DIVERGENCES.md](docs/DIVERGENCES.md) before adopting an API.
 
@@ -136,7 +135,7 @@ example under Apple's SwiftUI, where the flag has no special meaning.
 
 ```
 Sources/SwiftUIRuntime/   view protocol, element tree, layout, diff, state
-Sources/SwiftUIPort/      WindowsDrawingBackend, NativeViewBackend, app runner
+Sources/SwiftUIPort/      Windows and Linux drawing backends, app runner
 Sources/CSwiftUIWindows/  generic GDI+ display list and native button bridge
 Sources/SwiftUI/          facade: `import SwiftUI`
 Examples/Counter/         the README program
@@ -154,9 +153,9 @@ SwiftUI, and on Windows/Linux it compiles against the port's facade.
 A render pass evaluates bodies under scoped environment/state, resolves
 inherited properties, lays out the tree and diffs sibling identity. Backends
 receive incremental commands and the complete tree after diffing. Windows
-publishes a retained display list and updates native buttons using those
-frames; Linux applies nativeapi layout properties. FakeBackend records commands
-for platform-independent tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+publishes a retained GDI+ display list. Linux paints the tree with Cairo and
+Pango in GTK. Both use the shared layout frames for native input controls.
+FakeBackend records commands for platform-independent tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Compatibility
 

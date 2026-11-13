@@ -168,7 +168,7 @@ struct PaintedShape<S: Shape>: View, _PrimitiveView {
   let width: CGFloat
   let inset: Bool
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.fillWidth = true
     p.fillHeight = true
@@ -230,7 +230,7 @@ public struct LinearGradient: View, _PrimitiveView {
     data = Data(colors: colors, start: startPoint, end: endPoint)
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.gradient = data
     p.fillWidth = true
@@ -260,7 +260,7 @@ public struct Image: View, _PrimitiveView {
     image.template = mode == .template
     return image
   }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.imagePath =
       bundle.url(forResource: name, withExtension: "svg")?.path ?? bundle.url(
@@ -301,7 +301,7 @@ public struct Canvas: View, _PrimitiveView {
     self.renderer = renderer
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.fillWidth = true
     p.fillHeight = true

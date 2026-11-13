@@ -28,6 +28,19 @@ public struct TextMetrics: Equatable {
 }
 public struct LayoutEngine {
   private final class Cache {
+    enum Flexibility { case horizontal, vertical, both, neither }
+    struct TextKey: Hashable {
+      let text: String
+      let font: Font?
+      let width: Double?
+      let limit: Int?
+      let spacing: Double
+      let truncation: Text.TruncationMode
+    }
+    struct TextLayout {
+      let text: String
+      let size: Size
+    }
     struct Placement {
       let offered: Rect
       let element: Element
@@ -42,13 +55,19 @@ public struct LayoutEngine {
     var nextID = 1
     var identities: [Int: Identity] = [:]
     var measurements: [Pass.Key: Size] = [:]
+    var flexibility: [Int: Flexibility] = [:]
     var placements: [Int: Placement] = [:]
+    var geometryContent: [Int: Element] = [:]
+    var text: [TextKey: TextLayout] = [:]
     var timings: [String: Double] = [:]
     var passes = 0
     func reset() {
       identities.removeAll()
       measurements.removeAll()
+      flexibility.removeAll()
       placements.removeAll()
+      geometryContent.removeAll()
+      text.removeAll()
     }
   }
   private let cache = Cache()
@@ -61,8 +80,7 @@ public struct LayoutEngine {
     }
     var liveViews = Set<Int>()
     var liveMeasurements = Set<Int>()
-    var horizontal: [Int: Bool] = [:]
-    var vertical: [Int: Bool] = [:]
+    var geometryMilliseconds = 0.0
   }
   private var pass: Pass?
   public var lastTimings: [String: Double] { cache.timings }
@@ -114,6 +132,7 @@ public struct LayoutEngine {
     started = Date.timeIntervalSinceReferenceDate
     engine.layoutRoot(root: &root, in: size)
     cache.timings["place"] = (Date.timeIntervalSinceReferenceDate - started) * 1000
+    cache.timings["geometry"] = engine.pass?.geometryMilliseconds ?? 0
     started = Date.timeIntervalSinceReferenceDate
     if engine.pass!.prunes {
       for key in cache.identities.keys.filter({ !engine.pass!.liveViews.contains($0) }) {
@@ -123,19 +142,29 @@ public struct LayoutEngine {
       {
         cache.measurements.removeValue(forKey: key)
       }
-      for key in cache.placements.keys.filter({ !engine.pass!.liveViews.contains($0) }) {
+      for key in cache.flexibility.keys.filter({ !engine.pass!.liveMeasurements.contains($0) }) {
+        cache.flexibility.removeValue(forKey: key)
+      }
+      for key in cache.placements.keys.filter({ !engine.pass!.liveMeasurements.contains($0) }) {
         cache.placements.removeValue(forKey: key)
+      }
+      for key in cache.geometryContent.keys.filter({ !engine.pass!.liveMeasurements.contains($0) }) {
+        cache.geometryContent.removeValue(forKey: key)
       }
     }
     cache.timings["prune"] = (Date.timeIntervalSinceReferenceDate - started) * 1000
   }
-  private func identify(_ element: inout Element) {
+  private func identify(_ element: inout Element, previousGeometry: Element? = nil) {
     guard let pass else { return }
     if element.reusesLayout {
       retainIdentities(element)
       return
     }
-    for i in element.children.indices { identify(&element.children[i]) }
+    let previous = previousGeometry.flatMap { $0.kind == element.kind ? $0 : nil }
+    for i in element.children.indices {
+      let priorChild = previous.flatMap { i < $0.children.count ? $0.children[i] : nil }
+      identify(&element.children[i], previousGeometry: priorChild)
+    }
     element.hasDynamicLayout =
       element.geometryBuilder != nil || element.kind == .presentation || element.layout != nil
       || element.children.contains { $0.hasDynamicLayout }
@@ -144,22 +173,30 @@ public struct LayoutEngine {
     element.hasPreferences =
       element.geometryBuilder != nil || !element.preferences.isEmpty
       || element.preferenceAction != nil || element.children.contains { $0.hasPreferences }
-    let children = element.children.map(\.layoutID)
     let opaqueLayout =
       element.layout != nil || element.horizontalGuide != nil || element.verticalGuide != nil
     if element.evaluationID != 0,
       let previous = cache.identities[element.evaluationID],
       !opaqueLayout || previous.revision == element.evaluationRevision,
-      previous.kind == element.kind, previous.children == children,
+      previous.kind == element.kind, previous.children.count == element.children.count,
+      zip(previous.children, element.children).allSatisfy({ $0 == $1.layoutID }),
       sameSizing(previous.props, element.props)
     {
       element.layoutID = previous.id
+    } else if element.evaluationID == 0, let previous, !opaqueLayout,
+      previous.layoutID != 0, sameSizing(previous.props, element.props),
+      element.kind == .geometry
+        || (previous.children.count == element.children.count
+          && zip(previous.children, element.children).allSatisfy { $0.layoutID == $1.layoutID })
+    {
+      element.layoutID = previous.layoutID
     } else {
       element.layoutID = cache.nextID
       cache.nextID += 1
       if element.evaluationID != 0 {
         cache.identities[element.evaluationID] = Cache.Identity(
-          kind: element.kind, props: element.props, children: children, id: element.layoutID,
+          kind: element.kind, props: element.props, children: element.children.map(\.layoutID),
+          id: element.layoutID,
           revision: element.evaluationRevision)
       }
     }
@@ -188,6 +225,7 @@ public struct LayoutEngine {
       && a.scrollOffset == b.scrollOffset && a.alignment == b.alignment
       && a.horizontalAlignment == b.horizontalAlignment
       && a.verticalAlignment == b.verticalAlignment && a.coordinateSpace == b.coordinateSpace
+      && a.layerBehind == b.layerBehind
   }
   private func layoutRoot(root: inout Element, in size: Size) {
     let natural = measure(root, ProposedViewSize(width: size.width, height: size.height))
@@ -205,6 +243,23 @@ public struct LayoutEngine {
       ?? Size(
         width: Double(text.count) * metrics.characterWidth,
         height: font.map { Double($0.size) } ?? metrics.lineHeight)
+  }
+  private func textLayout(_ props: NodeProps, width: Double?) -> Cache.TextLayout {
+    let key = Cache.TextKey(
+      text: props.text, font: props.font, width: props.fixedWidth ? nil : width,
+      limit: props.lineLimit, spacing: props.lineSpacing, truncation: props.truncationMode)
+    if let cached = cache.text[key] { return cached }
+    let wrapped = lines(props, width: key.width)
+    var size = Size(height: Double(max(0, wrapped.count - 1)) * props.lineSpacing)
+    for line in wrapped {
+      let measured = textSize(line, props.font)
+      size.width = max(size.width, measured.width)
+      size.height += measured.height
+    }
+    let result = Cache.TextLayout(text: wrapped.joined(separator: "\n"), size: size)
+    if cache.text.count >= 8192 { cache.text.removeAll(keepingCapacity: true) }
+    cache.text[key] = result
+    return result
   }
   private func lines(_ p: NodeProps, width: Double?) -> [String] {
     var result: [String] = []
@@ -275,11 +330,7 @@ public struct LayoutEngine {
     var size = Size.zero
     switch e.kind {
     case .text, .button:
-      let textLines = lines(p, width: e.kind == .button ? nil : offer.width.map { Double($0) })
-      let sizes = textLines.map { textSize($0, p.font) }
-      size = Size(
-        width: sizes.map(\.width).max() ?? 0,
-        height: sizes.map(\.height).reduce(0, +) + Double(max(0, sizes.count - 1)) * p.lineSpacing)
+      size = textLayout(p, width: e.kind == .button ? nil : offer.width.map { Double($0) }).size
       if e.kind == .button {
         size.width += metrics.buttonHorizontalPadding * 2
         size.height += metrics.buttonVerticalPadding * 2
@@ -372,17 +423,17 @@ public struct LayoutEngine {
     }
   }
   private func fills(_ e: Element, horizontal: Bool) -> Bool {
-    guard let pass, e.layoutID != 0 else { return fillsUncached(e, horizontal: horizontal) }
-    if let result = horizontal ? pass.horizontal[e.layoutID] : pass.vertical[e.layoutID] {
-      return result
-    }
-    let result = fillsUncached(e, horizontal: horizontal)
-    if horizontal {
-      pass.horizontal[e.layoutID] = result
+    guard pass != nil, e.layoutID != 0 else { return fillsUncached(e, horizontal: horizontal) }
+    let flexibility: Cache.Flexibility
+    if let result = cache.flexibility[e.layoutID] {
+      flexibility = result
     } else {
-      pass.vertical[e.layoutID] = result
+      let width = fillsUncached(e, horizontal: true)
+      let height = fillsUncached(e, horizontal: false)
+      flexibility = width ? (height ? .both : .horizontal) : (height ? .vertical : .neither)
+      cache.flexibility[e.layoutID] = flexibility
     }
-    return result
+    return flexibility == .both || flexibility == (horizontal ? .horizontal : .vertical)
   }
   private func fillsUncached(_ e: Element, horizontal: Bool) -> Bool {
     let p = e.props
@@ -450,17 +501,17 @@ public struct LayoutEngine {
       }
       e.reusesLayout = false
     }
-    if !e.hasDynamicLayout, e.evaluationID != 0,
-      let previous = cache.placements[e.evaluationID],
-      previous.offered == offered, previous.element.layoutID == e.layoutID
+    if !e.hasDynamicLayout, !e.children.isEmpty, e.layoutID != 0,
+      let previous = cache.placements[e.layoutID],
+      previous.offered == offered, previous.element.layoutContext == GeometryContext.current
     {
       applyFrames(&e, from: previous.element)
       return
     }
     defer {
       e.hasPresentation = e.kind == .presentation || e.children.contains { $0.hasPresentation }
-      if !e.hasDynamicLayout && e.evaluationID != 0 {
-        cache.placements[e.evaluationID] = Cache.Placement(offered: offered, element: e)
+      if !e.hasDynamicLayout && !e.children.isEmpty && e.layoutID != 0 {
+        cache.placements[e.layoutID] = Cache.Placement(offered: offered, element: e)
       }
     }
     let rect = Rect(
@@ -474,7 +525,7 @@ public struct LayoutEngine {
     }
     defer { GeometryContext.current = namedOrigins }
     switch e.kind {
-    case .text: e.props.renderedText = lines(e.props, width: rect.width).joined(separator: "\n")
+    case .text: e.props.renderedText = textLayout(e.props, width: rect.width).text
     case .frame:
       if !e.children.isEmpty {
         let child = e.children[0]
@@ -521,15 +572,20 @@ public struct LayoutEngine {
           rect: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height),
           namedOrigins: GeometryContext.current)
         snapshot.capture {
+          let started = Date.timeIntervalSinceReferenceDate
           var child = builder(
             CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: rect.height))
+          pass?.geometryMilliseconds += (Date.timeIntervalSinceReferenceDate - started) * 1000
           resolveEnvironment(
             &child, inheritedForeground: e.props.foreground, inheritedDisabled: !e.props.enabled,
             inheritedOpacity: e.props.opacity, inheritedVisible: e.props.visible,
             inheritedLineLimit: e.props.lineLimit, inheritedLineSpacing: e.props.lineSpacing)
-          identify(&child)
+          // Geometry content is rebuilt with its current closure and scope.
+          // Reuse only layout identities when the new content measures alike.
+          identify(&child, previousGeometry: cache.geometryContent[e.layoutID])
           e.children = [child]
           place(&e.children[0], in: rect)
+          if e.layoutID != 0 { cache.geometryContent[e.layoutID] = e.children[0] }
         }
         e.geometrySnapshot = snapshot
         e.hasPresentation = e.children.contains { $0.hasPresentation }
@@ -598,26 +654,31 @@ public struct LayoutEngine {
     let crossExtent = vertical ? rect.width : rect.height
     let proposal = ProposedViewSize(
       width: vertical ? rect.width : nil, height: vertical ? nil : rect.height)
+    let alignment = Alignment(
+      horizontal: e.props.horizontalAlignment, vertical: e.props.verticalAlignment)
     var fixed = Double(max(0, visible.count - 1)) * e.props.spacing
     var flexTotal = 0.0
-    for i in visible {
-      let child = e.children[i]
-      if child.props.flex > 0 || fills(child, horizontal: !vertical) {
-        flexTotal += max(1, child.props.flex)
-      } else {
-        let size = measure(child, proposal)
-        fixed += vertical ? size.height : size.width
-      }
-    }
-    var cursor = vertical ? rect.minY : rect.minX
+    var sizes: [(natural: Size, flex: Double)] = []
+    sizes.reserveCapacity(visible.count)
     for i in visible {
       let child = e.children[i]
       let natural = measure(child, proposal)
-      let flexible = child.props.flex > 0 || fills(child, horizontal: !vertical)
-      let main =
-        flexible
-        ? max(0, mainExtent - fixed) * max(1, child.props.flex) / max(1, flexTotal)
-        : (vertical ? natural.height : natural.width)
+      let flex = child.props.flex > 0 || fills(child, horizontal: !vertical)
+        ? max(1, child.props.flex) : 0
+      sizes.append((natural, flex))
+      if flex > 0 {
+        flexTotal += flex
+      } else {
+        fixed += vertical ? natural.height : natural.width
+      }
+    }
+    var cursor = vertical ? rect.minY : rect.minX
+    let available = max(0, mainExtent - fixed)
+    for (i, sizing) in zip(visible, sizes) {
+      let child = e.children[i]
+      let natural = sizing.natural
+      let main = sizing.flex > 0
+        ? available * sizing.flex / max(1, flexTotal) : (vertical ? natural.height : natural.width)
       let cross =
         fills(child, horizontal: vertical) || child.props.flex > 0
         ? crossExtent : min(crossExtent, vertical ? natural.width : natural.height)
@@ -628,11 +689,7 @@ public struct LayoutEngine {
         : Rect(x: cursor, y: rect.minY, width: main, height: crossExtent)
       place(
         &e.children[i],
-        in: aligned(
-          size, in: slot,
-          alignment: Alignment(
-            horizontal: e.props.horizontalAlignment, vertical: e.props.verticalAlignment),
-          child: child))
+        in: aligned(size, in: slot, alignment: alignment, child: child))
       cursor += main + e.props.spacing
     }
     for i in e.children.indices where !e.children[i].props.visible { e.children[i].frame = .zero }
@@ -640,6 +697,7 @@ public struct LayoutEngine {
   private func applyFrames(_ element: inout Element, from previous: Element) {
     if element.frame != previous.frame { element.reusesLayout = false }
     element.frame = previous.frame
+    element.layoutContext = previous.layoutContext
     element.props.renderedText = previous.props.renderedText
     element.props.scrollOffset = previous.props.scrollOffset
     for i in element.children.indices {

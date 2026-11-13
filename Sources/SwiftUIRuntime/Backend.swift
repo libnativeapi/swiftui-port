@@ -31,6 +31,9 @@ public enum RenderCommand: Equatable {
   case setFrame(id: NodeID, frame: Rect)
 }
 public protocol RenderBackend: AnyObject {
+  /// Backends that reconcile the full tree can opt out of `perform` calls
+  /// and incremental command generation.
+  var needsRenderCommands: Bool { get }
   /// Return true when the backend will call this on its next update boundary.
   func requestRender(_ render: @escaping () -> Void) -> Bool
   /// Optional diagnostics, after a complete runtime update (milliseconds).
@@ -92,6 +95,7 @@ public final class FakeBackend: RenderBackend {
   }
 }
 extension RenderBackend {
+  public var needsRenderCommands: Bool { true }
   public func requestRender(_ render: @escaping () -> Void) -> Bool { false }
   public func didMeasureRender(_ timings: [String: Double]) {}
   public func didRender(_ root: Element) {}

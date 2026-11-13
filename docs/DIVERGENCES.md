@@ -16,9 +16,10 @@ Decorative content has no complete UI Automation provider. Accessibility
 modifiers retain metadata; native control names and modal control exclusion are
 implemented, but a full accessible hierarchy and focus scopes are not.
 
-Linux retains the original label/button/stack backend. Drawing-only nodes fail
-explicitly there. macOS apps import Apple's SwiftUI; only runtime tests use this
-implementation. This change has been verified on Windows, not Linux/macOS.
+Linux uses Cairo and Pango in a GTK 3 drawing area. GTK entries and text views
+provide native editing and keyboard focus. GTK buttons expose native activation
+and AT-SPI names. Drawn content lacks a complete accessible hierarchy.
+macOS apps import Apple's SwiftUI; only runtime tests use this implementation.
 
 ## Drawing and text
 
@@ -27,17 +28,19 @@ monospaced faces map to Segoe UI, Georgia and Consolas. Weights use regular/bold
 buckets. There is no variable-font, dynamic-type or Apple font fallback parity.
 Wrapping, newlines, line spacing and limited ellipsis are supported. Concatenated
 Text runs retain font/color but do not form a full attributed text layout engine.
-Tracking, multiline alignment and underline metadata are not fully rendered.
+Linux uses the system font families and Pango weight selection, tracking and
+underline. Multiline alignment and attributed text layout remain limited.
 
 SVG template images support path geometry, including elliptical arcs, from a
 viewBox. SVG styling, text, filters, embedded images and asset catalogs are not
 implemented. Gradients use evenly spaced stops. Canvas supports path fills,
-clipping and scale/translation. Circular trim is supported; arbitrary path trim
-and dashed strokes are not complete.
+clipping and scale/translation. Circular trim is supported. Arbitrary path trim
+is incomplete. Linux supports dashed strokes.
 
 Rounded corners use circular arcs for both styles. Shadows are finite layered
-approximations. Alpha is per primitive, not offscreen group compositing. Arbitrary
-clip paths constrain drawing; native controls use rectangular viewport clipping.
+approximations. Windows applies alpha per primitive; Linux composites Cairo
+groups. Arbitrary clip paths constrain drawing; native controls use rectangular
+viewport clipping.
 
 ## Layout, state and events
 
@@ -79,10 +82,11 @@ complete. Context menus are drawn content, not native OS menus.
 
 Appearance/change/disappearance callbacks run after mounting. Tasks cancel when
 their view disappears or task id changes. The Windows bridge pumps Swift's main
-Dispatch queue alongside NativeAPI's Win32 loop; this uses the Swift runtime's
-`_dispatch_main_queue_callback_4CF` export and is verified with Swift 6.4.2.
+Dispatch queue alongside NativeAPI's Win32 loop. Linux watches libdispatch's
+main queue descriptor from the GTK loop. Both use the Swift runtime's
+`_dispatch_main_queue_callback_4CF` export.
 
-Windows interpolates rotation, scale, opacity and offset, including repeat and
+Both backends interpolate rotation, scale, opacity and offset, including repeat and
 delay. Timing curves currently interpolate linearly. Layout/color interpolation,
 entry/exit transitions and exact presentation-time hit geometry are incomplete.
 Reduced motion can be supplied through EnvironmentValues.

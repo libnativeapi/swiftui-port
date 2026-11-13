@@ -6,7 +6,7 @@
 
 @MainActor @preconcurrency
 func makeTree<V: View>(_ view: V, size: Size) -> Element {
-  var element = normalize(_render(view, path: []))
+  var element = normalize(_render(view, path: ViewPath()))
   resolveEnvironment(&element)
   assignKeys(&element)
   LayoutEngine().layout(root: &element, in: size)
@@ -19,7 +19,7 @@ func diffTrees<V1: View, V2: View>(
   size: Size
 ) -> (mounted: Element, updated: Element, commands: [RenderCommand]) {
   var allocator = NodeIDAllocator()
-  var commands: [RenderCommand] = []
+  var commands: [RenderCommand]? = []
   let mounted = createSubtree(
     makeTree(old, size: size),
     parent: nil,
@@ -27,7 +27,7 @@ func diffTrees<V1: View, V2: View>(
     commands: &commands,
     allocator: &allocator
   )
-  commands.removeAll()
+  commands = []
   let updated = diffElement(
     old: mounted,
     new: makeTree(new, size: size),
@@ -36,7 +36,7 @@ func diffTrees<V1: View, V2: View>(
     commands: &commands,
     allocator: &allocator
   )
-  return (mounted, updated, commands)
+  return (mounted, updated, commands ?? [])
 }
 func findNode(in element: Element, kind: ElementKind) -> Element? {
   if element.kind == kind { return element }

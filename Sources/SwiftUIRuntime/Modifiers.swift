@@ -46,14 +46,14 @@ public struct ModifiedView<Content: View>: View {
   public var body: Never { fatalError("ModifiedView is a primitive view") }
 }
 extension ModifiedView: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let saved = EnvironmentValues.current
     if case .disabled(let disabled) = modifier {
       EnvironmentValues.current.isEnabled = !disabled
     }
-    let renderPath: [Int]
+    let renderPath: ViewPath
     if case .id(let value) = modifier {
-      renderPath = path + [value.hashValue]
+      renderPath = path.appending(id: value)
     } else {
       renderPath = path
     }

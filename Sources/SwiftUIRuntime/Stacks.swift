@@ -20,7 +20,7 @@ public struct VStack<Content: View>: View {
 }
 
 extension VStack: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let contentElement = _render(content, path: path)
     var props = NodeProps()
     props.spacing = spacing
@@ -55,7 +55,7 @@ public struct HStack<Content: View>: View {
 }
 
 extension HStack: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let contentElement = _render(content, path: path)
     var props = NodeProps()
     props.spacing = spacing

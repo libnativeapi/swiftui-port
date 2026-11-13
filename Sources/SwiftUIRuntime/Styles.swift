@@ -2,8 +2,8 @@
 
 /// Timing for the supported Windows drawing-property animations.
 
-public struct Font: Equatable, Sendable {
-  public struct Weight: Equatable, Sendable {
+public struct Font: Hashable, Sendable {
+  public struct Weight: Hashable, Sendable {
     public let value: Double
     public init(_ value: Double) { self.value = value }
     public static let ultraLight = Weight(100), thin = Weight(200), light = Weight(300)
@@ -46,7 +46,7 @@ struct ModifierContent<Content: View, Modifier: ViewModifier>: View, _PrimitiveV
   let content: Content
   let modifier: Modifier
   var body: Never { fatalError("ModifierContent is primitive") }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     _installState(modifier, path: path)
     return _render(modifier.body(content: AnyView(content)), path: path)
   }
@@ -91,7 +91,7 @@ struct ShapeView: View, _PrimitiveView {
   var stroke: Color = .clear
   var lineWidth: CGFloat = 0
   var body: Never { fatalError("Shape is primitive") }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var props = NodeProps()
     props.background = fill
     props.cornerRadius = Double(radius)
@@ -107,7 +107,7 @@ struct TransformView<Content: View>: View, _PrimitiveView {
   let content: Content
   let transform: (inout Element) -> Void
   var body: Never { fatalError("TransformView is primitive") }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var result = _render(content, path: path)
     transform(&result)
     return result
@@ -120,14 +120,14 @@ struct LayerView<Content: View, Layer: View>: View, _PrimitiveView {
   let behind: Bool
   let alignment: Alignment
   var body: Never { fatalError("LayerView is primitive") }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var props = NodeProps()
     props.alignment = alignment
     props.layerBehind = behind
     return Element(
       kind: .layer, props: props,
       children: [
-        _render(content, path: path + [0]), _render(layer, path: path + [1]),
+        _render(content, path: path.appending(index: 0)), _render(layer, path: path.appending(index: 1)),
       ])
   }
 }

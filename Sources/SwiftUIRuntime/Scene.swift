@@ -90,10 +90,6 @@ extension WindowGroup: _WindowScene {
   public var _windowTitle: String { title }
 
   public func _makeRootView() -> AnyView {
-    // The root view value (and therefore its @State wrappers) is constructed
-    // under the root state scope, matching the path the renderer evaluates.
-    StateRegistry.shared.withScope([]) {
-      AnyView(content())
-    }
+    AnyView(content())
   }
 }

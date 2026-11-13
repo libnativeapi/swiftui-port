@@ -37,9 +37,9 @@ private struct PopoverView<Content: View, Panel: View>: View, _PrimitiveView {
   let isPresented: Binding<Bool>
   let edge: Edge
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
-    var children = [_render(content, path: path + [0])]
-    if isPresented.wrappedValue { children.append(_render(panel, path: path + [1])) }
+  func _makeElement(path: ViewPath) -> Element {
+    var children = [_render(content, path: path.appending(index: 0))]
+    if isPresented.wrappedValue { children.append(_render(panel, path: path.appending(index: 1))) }
     var element = Element(kind: .presentation, children: children)
     element.presentationEdge = edge
     element.dismissPresentation = { isPresented.wrappedValue = false }
@@ -136,9 +136,9 @@ private struct ContextMenuView<Content: View, Menu: View>: View, _PrimitiveView 
   @State private var presented = false
   @State private var location = CGPoint.zero
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
-    var children = [_render(content, path: path + [0])]
-    if presented { children.append(_render(menu, path: path + [1])) }
+  func _makeElement(path: ViewPath) -> Element {
+    var children = [_render(content, path: path.appending(index: 0))]
+    if presented { children.append(_render(menu, path: path.appending(index: 1))) }
     var element = Element(kind: .presentation, children: children)
     element.dismissOnAction = true
     element.presentationPoint = location

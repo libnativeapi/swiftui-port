@@ -19,7 +19,7 @@ where Key.Value: Equatable {
   let action: (Key.Value) -> Void
   @State private var previous: Key.Value?
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var element = _render(content, path: path)
     let old = element.preferenceAction
     element.preferenceAction = { values in

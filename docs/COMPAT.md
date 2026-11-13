@@ -7,10 +7,9 @@ behavioral or platform limits. Neither means full SwiftUI conformance.
 The table is checked against the source by `COMPATTests`.
 See [DIVERGENCES.md](DIVERGENCES.md) for rendering and state semantics.
 
-The runtime is portable. **Custom drawing currently runs on Windows only.**
-Linux retains the native label/button/stack backend; attempting to render a
-shape, view layer or styled button there fails explicitly. macOS applications
-use Apple's SwiftUI, while the port's runtime tests can run on macOS.
+Windows and Linux use the shared runtime with platform drawing and native
+controls. macOS applications use Apple's SwiftUI, while the port's runtime
+tests can run on macOS.
 
 | symbol | status | behavior |
 |---|---|---|
@@ -24,17 +23,17 @@ use Apple's SwiftUI, while the port's runtime tests can run on macOS.
 | `VStack(alignment:spacing:)` | supported | vertical stack |
 | `HStack(alignment:spacing:)` | supported | horizontal stack |
 | `Spacer` | partial | leftover main-axis space; minLength is not enforced |
-| `Text` | partial | Windows measurement, wrapping, ellipsis and concatenated styled runs |
+| `Text` | partial | native measurement, wrapping, ellipsis and concatenated styled runs |
 | `Button(_:action:)` | supported | native button handle and activation |
 | `Button(action:label:)` | partial | custom labels through ButtonStyle; unstyled labels flatten to a native text title |
-| `ButtonStyle` | partial | Windows custom visuals, native activation, isPressed; direct button modifier only |
+| `ButtonStyle` | partial | custom visuals, native activation, isPressed; direct button modifier only |
 | `Color` | partial | RGB/opacity, solid view, fixed colors; no dynamic/system color catalog |
-| `Font` | partial | Windows family and size; regular/bold weight buckets, no variable font axes |
-| `Rectangle` | partial | Windows fill/strokeBorder |
-| `RoundedRectangle` | partial | Windows circular corners; continuous currently uses the same geometry |
+| `Font` | partial | native family and size; Windows uses regular/bold weight buckets |
+| `Rectangle` | partial | fill/strokeBorder |
+| `RoundedRectangle` | partial | circular corners; continuous currently uses the same geometry |
 | `Shape` | partial | custom Path, circles and rounded rectangles; trim is implemented for circular paths |
 | `Edge` | supported | individual edges and Edge.Set for padding |
-| `Alignment` | partial | frame/layer alignment in Windows layout; Linux uses native layout |
+| `Alignment` | partial | frame and layer alignment |
 | `@State` | partial | mounted structural path, concrete view type and property position; single renderer |
 | `@Binding` | supported | get/set pair and constant bindings |
 | `@Environment` | partial | scoped snapshots retained by callbacks; no system-setting subscription |
@@ -42,25 +41,25 @@ use Apple's SwiftUI, while the port's runtime tests can run on macOS.
 | `EnvironmentValues` | partial | custom values, font, colorScheme and accessibilityReduceMotion |
 | `@FocusState` | partial | Bool and optional-value bindings; native button/edit focus |
 | `.padding(_:)` | supported | uniform, EdgeInsets and Edge.Set overloads |
-| `.frame(width:height:alignment:)` | partial | ordered wrapper; Windows alignment, min/max and infinity; Linux preferred size |
-| `.background(_:)` | partial | solid color everywhere; view builder layers on Windows |
-| `.overlay` | partial | Windows view layers, aligned without affecting base size |
+| `.frame(width:height:alignment:)` | partial | ordered wrapper; alignment, min/max and infinity |
+| `.background(_:)` | partial | solid colors and view builder layers |
+| `.overlay` | partial | view layers, aligned without affecting base size |
 | `.foregroundColor(_:)` | partial | inherited Text color; native unstyled button keeps platform colors |
 | `.foregroundStyle` | partial | Color overload only |
-| `.font` | partial | Windows Text and styled button labels |
+| `.font` | partial | Text and styled button labels |
 | `.lineLimit` | partial | wrapping and head/tail ellipsis; limited rich-text wrapping |
 | `.lineSpacing` | partial | spacing between explicit lines |
-| `.opacity` | partial | Windows per-primitive alpha, not offscreen group compositing |
+| `.opacity` | partial | per-primitive alpha on Windows; Cairo groups on Linux |
 | `.clipShape` | partial | vector drawing clip and rectangular native control viewport clipping |
-| `.contentShape` | partial | Windows rounded button hit region; not arbitrary gesture hit testing |
-| `.shadow` | partial | Windows layered approximation, not Gaussian blur |
-| `.animation` | partial | Windows opacity, rotation, scale and offset interpolation, repeat/delay; no general layout/color interpolation |
+| `.contentShape` | partial | rounded native button hit region on Windows; limited gesture hit testing |
+| `.shadow` | partial | layered approximation |
+| `.animation` | partial | opacity, rotation, scale and offset interpolation, repeat/delay; no general layout/color interpolation |
 | `.hidden()` | partial | collapses layout instead of retaining space |
 | `.disabled(_:)` | partial | inherited by descendants; inner false can re-enable |
 | `.onTapGesture(perform:)` | partial | button actions and hit-tested host content |
-| `.onHover` | partial | Windows control/host hover and ancestor delivery |
-| `.focused` | partial | Windows Bool binding; no focus scopes |
-| `.help` | partial | Windows button tooltips |
+| `.onHover` | partial | control/host hover and ancestor delivery |
+| `.focused` | partial | Bool and optional-value bindings; no focus scopes |
+| `.help` | partial | native button tooltips |
 | `.id(_:)` | partial | diff identity and explicit state scope |
 | `App` | supported | entry point supplied by SwiftUIPort |
 | `Scene` | partial | one WindowGroup |
@@ -68,7 +67,7 @@ use Apple's SwiftUI, while the port's runtime tests can run on macOS.
 | `@main` | supported | App.main() runner |
 | `SwiftUI` module | supported | facade on Windows and Linux only |
 
-## Additional Windows capabilities
+## Additional drawing backend capabilities
 
 | symbol | status | behavior |
 |---|---|---|
@@ -85,8 +84,8 @@ use Apple's SwiftUI, while the port's runtime tests can run on macOS.
 | `Canvas` | partial | vector fills, clipping, translation and scaling |
 | `LinearGradient` | partial | evenly spaced color stops |
 | `Image` | partial | bundled SVG path template images and raster files; no asset catalogs or symbol catalog |
-| `TextField` | partial | native EDIT with binding, selection and native IME; opaque background |
-| `SecureField` | partial | native password EDIT |
+| `TextField` | partial | native editor with binding, selection and IME; vertical axis uses multiline editing |
+| `SecureField` | partial | native password editor |
 | `ObservableObject` | partial | process-wide invalidation, one active renderer |
 | `StateObject` | partial | lazy retained object, scoped by mounted identity |
 | `ObservedObject` | partial | object and writable-key-path bindings |
@@ -97,13 +96,13 @@ use Apple's SwiftUI, while the port's runtime tests can run on macOS.
 | `.task` | partial | cancellable main-actor task, restarted by id |
 | `.gesture` | partial | DragGesture; no simultaneous/priority gesture arbitration |
 | `.onKeyPress` | partial | native key routing and ancestor handlers; limited character/layout mapping |
-| `.keyboardShortcut` | partial | scoped key actions; Command shortcuts also accept Control on Windows |
+| `.keyboardShortcut` | partial | scoped key actions; Command shortcuts also accept Control |
 | `.popover` | partial | root-layer presentation, edge flipping, outside/Escape dismissal and optional background interaction |
 | `.presentationBackgroundInteraction` | partial | enabled/disabled background controls; outside host press dismisses first |
 | `.contextMenu` | partial | right-click root-layer content, dismissed on selection |
-| `withAnimation` | partial | marks synchronous state updates for supported Windows interpolation |
+| `withAnimation` | partial | marks synchronous state updates for supported interpolation |
 | `.transition` | partial | accepted metadata; insertion/removal transitions not animated |
-| `.accessibilityLabel` | partial | native control names; decorative nodes keep metadata without a full UIA provider |
+| `.accessibilityLabel` | partial | native control names; decorative nodes keep metadata without a full platform accessibility provider |
 | `.border` | supported | shape overlay |
 | `.cornerRadius` | partial | circular clipping geometry |
 

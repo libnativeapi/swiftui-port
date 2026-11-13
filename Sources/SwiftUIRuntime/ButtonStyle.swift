@@ -18,11 +18,11 @@ struct StyledButton<Label: View, Style: ButtonStyle>: View, _PrimitiveView {
     self.style = style
   }
   var body: Never { fatalError("StyledButton is primitive") }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let content = style.makeBody(
       configuration: ButtonStyleConfiguration(label: AnyView(button.label), isPressed: pressed))
     var element = Element(
-      kind: .styledButton, children: [_render(content, path: path + [0])], action: button.action)
+      kind: .styledButton, children: [_render(content, path: path.appending(index: 0))], action: button.action)
     element.pressedAction = { if pressed != $0 { pressed = $0 } }
     return element
   }

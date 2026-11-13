@@ -11,7 +11,7 @@
 public struct Text: View {
   public typealias Body = Never
 
-  public enum TruncationMode: Equatable { case head, middle, tail }
+  public enum TruncationMode: Hashable { case head, middle, tail }
   struct Run {
     var text: String
     var font: Font?
@@ -28,7 +28,7 @@ public struct Text: View {
   public var body: Never { fatalError("Text is a primitive view") }
 }
 extension Text: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var props = NodeProps()
     props.text = content
     props.font = textFont ?? EnvironmentValues.current.font
@@ -69,7 +69,7 @@ public struct Button<Label: View>: View {
   public var body: Never { fatalError("Button is a primitive view") }
 }
 extension Button: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var props = NodeProps()
     // Unstyled buttons use the native title renderer. A custom ButtonStyle
     // renders the full label tree; the default style extracts its text.
@@ -77,7 +77,7 @@ extension Button: _PrimitiveView {
       if element.kind == .text { return element.props.text }
       return element.children.map(text).filter { !$0.isEmpty }.joined(separator: " ")
     }
-    props.text = title.isEmpty ? text(_render(label, path: path + [0])) : title
+    props.text = title.isEmpty ? text(_render(label, path: path.appending(index: 0))) : title
     return Element(kind: .button, props: props, action: action)
   }
 }
@@ -93,7 +93,7 @@ public struct Spacer: View {
   public var body: Never { fatalError("Spacer is a primitive view") }
 }
 extension Spacer: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var props = NodeProps()
     props.flex = 1
     return Element(kind: .spacer, props: props)
@@ -107,19 +107,25 @@ public struct EmptyView: View {
   public var body: Never { fatalError("EmptyView is a primitive view") }
 }
 extension EmptyView: _PrimitiveView {
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     Element(kind: .empty)
   }
 }
 func flattenChildren(_ element: Element) -> [Element] {
-  switch element.kind {
-  case .fragment:
-    return element.children.flatMap(flattenChildren)
-  case .empty:
-    return []
-  default:
-    return [element]
+  if element.kind == .fragment {
+    var children: [Element] = []
+    children.reserveCapacity(element.children.count)
+    func append(_ child: Element) {
+      switch child.kind {
+      case .fragment: child.children.forEach(append)
+      case .empty: break
+      default: children.append(child)
+      }
+    }
+    element.children.forEach(append)
+    return children
   }
+  return element.kind == .empty ? [] : [element]
 }
 extension Text {
   public func font(_ font: Font?) -> Text {

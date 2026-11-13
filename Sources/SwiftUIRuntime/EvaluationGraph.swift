@@ -7,7 +7,7 @@ final class EvaluationGraph {
   private static var nextID = 1
   private final class Node {
     let type: ObjectIdentifier
-    let path: [Int]
+    let path: ViewPath
     let id: Int
     var revision = 0
     weak var parent: Node?
@@ -18,9 +18,11 @@ final class EvaluationGraph {
     var inputChanged = true
     var result: Element?
     var reads = Set<StateKey>()
+    var previousReads = Set<StateKey>()
     var state = Set<StateKey>()
     var lifecycle = Set<StateKey>()
-    init(type: ObjectIdentifier, path: [Int], parent: Node?, graph: EvaluationGraph) {
+    lazy var reference = WeakNode(self)
+    init(type: ObjectIdentifier, path: ViewPath, parent: Node?, graph: EvaluationGraph) {
       self.type = type
       self.path = path
       self.parent = parent
@@ -30,8 +32,7 @@ final class EvaluationGraph {
     }
     deinit {
       for key in reads {
-        graph?.readers[key]?.removeValue(forKey: ObjectIdentifier(self))
-        if graph?.readers[key]?.isEmpty == true { graph?.readers.removeValue(forKey: key) }
+        graph?.removeReader(id, of: key)
       }
     }
     func retain() {
@@ -46,13 +47,20 @@ final class EvaluationGraph {
   }
   private var root: Node?
   private var current: Node?
-  private var readers: [StateKey: [ObjectIdentifier: WeakNode]] = [:]
+  private var readers: [StateKey: [Int: WeakNode]] = [:]
+
+  private func removeReader(_ id: Int, of key: StateKey) {
+    readers[key]?.removeValue(forKey: id)
+    if readers[key]?.isEmpty == true { readers.removeValue(forKey: key) }
+  }
 
   func invalidateAll() {
     root?.dirty = true
     root?.descendantDirty = true
   }
+
   func invalidate(_ key: StateKey) {
+    // Layout-built content can read state outside this graph.
     guard let entries = readers[key], entries.values.contains(where: { $0.value != nil }) else {
       invalidateAll()
       return
@@ -62,14 +70,17 @@ final class EvaluationGraph {
       node.dirty = true
       var ancestor: Node? = node
       while let item = ancestor {
+        if item.descendantDirty { break }
         item.descendantDirty = true
         ancestor = item.parent
       }
     }
   }
   func read(_ key: StateKey) {
-    guard let current, current.reads.insert(key).inserted else { return }
-    readers[key, default: [:]][ObjectIdentifier(current)] = WeakNode(current)
+    guard let current, current.reads.insert(key).inserted,
+      !current.previousReads.contains(key)
+    else { return }
+    readers[key, default: [:]][current.id] = current.reference
   }
   func installState(_ key: StateKey) { current?.state.insert(key) }
   func installLifecycle(_ key: StateKey) { current?.lifecycle.insert(key) }
@@ -89,7 +100,7 @@ final class EvaluationGraph {
     defer { Self.active = previous }
     return body()
   }
-  func evaluate(type: ObjectIdentifier, path: [Int], _ body: () -> Element) -> Element {
+  func evaluate(type: ObjectIdentifier, path: ViewPath, _ body: () -> Element) -> Element {
     let parent = current
     let node: Node
     if let parent {
@@ -118,7 +129,7 @@ final class EvaluationGraph {
       node.retain()
       return result
     }
-    for key in node.reads { readers[key]?.removeValue(forKey: ObjectIdentifier(node)) }
+    swap(&node.reads, &node.previousReads)
     node.reads.removeAll(keepingCapacity: true)
     node.state.removeAll(keepingCapacity: true)
     node.lifecycle.removeAll(keepingCapacity: true)
@@ -127,6 +138,7 @@ final class EvaluationGraph {
     node.cursor = 0
     current = node
     var result = body()
+    for key in node.previousReads where !node.reads.contains(key) { removeReader(node.id, of: key) }
     result.evaluationID = node.id
     node.revision += 1
     result.evaluationRevision = node.revision

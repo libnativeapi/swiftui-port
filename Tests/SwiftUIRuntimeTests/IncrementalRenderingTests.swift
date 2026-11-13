@@ -88,6 +88,41 @@ final class IncrementalRenderingTests: XCTestCase {
         .onDisappear { counts.disappearances += 1 }
     }
   }
+
+  private struct CollidingID: Hashable {
+    let name: String
+    func hash(into hasher: inout Hasher) { hasher.combine(0) }
+  }
+
+  private struct CollidingRows: View {
+    let counts: Counts
+    @State private var reversed = false
+
+    var body: some View {
+      let names = reversed ? ["second", "first"] : ["first", "second"]
+      VStack {
+        Button("Reverse") { reversed.toggle() }
+        ForEach(names.map { CollidingID(name: $0) }, id: \.self) { item in
+          Counter(name: item.name, counts: counts)
+        }
+      }
+    }
+  }
+
+  func testCollidingCollectionIDsRetainIndependentStateAfterReordering() throws {
+    StateRegistry.shared.reset()
+    let renderer = Renderer(
+      backend: FakeBackend(), root: AnyView(CollidingRows(counts: Counts())),
+      size: Size(width: 300, height: 200))
+    renderer.mount()
+    let first = try XCTUnwrap(findNode(in: renderer.tree!, text: "first:0"))
+    let reverse = try XCTUnwrap(findNode(in: renderer.tree!, text: "Reverse"))
+    renderer.performTap(first.id)
+    XCTAssertNotNil(findNode(in: renderer.tree!, text: "second:0"))
+    renderer.performTap(reverse.id)
+    XCTAssertEqual(findNode(in: renderer.tree!, text: "first:1")?.id, first.id)
+    XCTAssertNotNil(findNode(in: renderer.tree!, text: "second:0"))
+  }
   private struct Family: View {
     let counts: Counts
     @State private var show = true

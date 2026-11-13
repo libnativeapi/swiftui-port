@@ -87,7 +87,7 @@ public struct TextField: View, _PrimitiveView {
     self.axis = axis
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.text = text.wrappedValue
     p.placeholder = title

@@ -12,7 +12,7 @@ public struct ZStack<Content: View>: View, _PrimitiveView {
     self.content = content()
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var props = NodeProps()
     props.alignment = alignment
     return Element(
@@ -39,11 +39,11 @@ public struct ForEach<Data: RandomAccessCollection, ID: Hashable, Content: View>
     self.init(data, id: \.id, content: content)
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     Element(
       kind: .fragment,
       children: data.map { item in
-        var child = _render(content(item), path: path + [item[keyPath: id].hashValue])
+        var child = _render(content(item), path: path.appending(id: AnyHashable(item[keyPath: id])))
         child.explicitID = AnyHashable(item[keyPath: id])
         return child
       })
@@ -68,7 +68,7 @@ public struct ScrollView<Content: View>: View, _PrimitiveView {
     self.showsIndicators = showsIndicators
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.scrollAxes = axes
     p.scrollOffset = offset
@@ -77,8 +77,8 @@ public struct ScrollView<Content: View>: View, _PrimitiveView {
     p.fillWidth = true
     p.fillHeight = axes.contains(.vertical)
     let child =
-      EvaluationGraph.active?.withStoredContent { _render(content, path: path + [0]) }
-      ?? _render(content, path: path + [0])
+      EvaluationGraph.active?.withStoredContent { _render(content, path: path.appending(index: 0)) }
+      ?? _render(content, path: path.appending(index: 0))
     var result = Element(kind: .scroll, props: p, children: [child])
     result.scrollAction = { offset = $0 }
     result.scrollStateKey = _offset.installedKey
@@ -118,7 +118,7 @@ public struct GeometryReader<Content: View>: View, _PrimitiveView {
   let content: (GeometryProxy) -> Content
   public init(@ViewBuilder content: @escaping (GeometryProxy) -> Content) { self.content = content }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     let environment = EnvironmentValues.current
     var p = NodeProps()
     p.fillWidth = true
@@ -134,7 +134,7 @@ public struct GeometryReader<Content: View>: View, _PrimitiveView {
             GeometryProxy(
               snapshot: GeometrySnapshot.active
                 ?? GeometrySnapshot(rect: rect, namedOrigins: GeometryContext.current))),
-          path: path + [0]))
+          path: path.appending(index: 0)))
     }
     return result
   }
@@ -223,7 +223,7 @@ struct LayoutContainer<L: Layout, Content: View>: View, _PrimitiveView {
   let layout: L
   let content: Content
   var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var result = Element(
       kind: .customLayout, children: flattenChildren(_render(content, path: path)))
     result.layout = LayoutBridge(layout: layout)
@@ -337,7 +337,7 @@ public struct Grid<Content: View>: View, _PrimitiveView {
     self.content = content()
   }
   public var body: Never { fatalError() }
-  func _makeElement(path: [Int]) -> Element {
+  func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
     p.alignment = alignment
     p.spacing = verticalSpacing
