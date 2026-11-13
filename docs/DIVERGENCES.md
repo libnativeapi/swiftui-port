@@ -21,6 +21,16 @@ provide native editing and keyboard focus. GTK buttons expose native activation
 and AT-SPI names. Drawn content lacks a complete accessible hierarchy.
 macOS apps import Apple's SwiftUI; only runtime tests use this implementation.
 
+## Browser
+
+WebAssembly mounts one `WindowGroup` in the page. Its title sets the document
+title, and the root element's dimensions determine the layout. HTML controls
+provide editing, focus and activation. Text metrics and scrollbar appearance
+follow the browser. Image names resolve to URLs served alongside the page.
+Apple asset catalog lookup and drawing-property animations are currently
+desktop features. SwiftUI's runtime compatibility limits also apply in the
+browser.
+
 ## Drawing and text
 
 GDI+ measures and draws Windows fonts in logical points. System sans, serif and

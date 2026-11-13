@@ -242,12 +242,12 @@ public struct Image: View, _PrimitiveView {
   public typealias Body = Never
   public enum TemplateRenderingMode { case template, original }
   let name: String
-  let bundle: Bundle
+  let bundle: Bundle?
   var template = false
   var flexible = false
   public init(_ name: String, bundle: Bundle? = nil) {
     self.name = name
-    self.bundle = bundle ?? .main
+    self.bundle = bundle
   }
   public var body: Never { fatalError() }
   public func resizable() -> Image {
@@ -262,9 +262,14 @@ public struct Image: View, _PrimitiveView {
   }
   func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
-    p.imagePath =
-      bundle.url(forResource: name, withExtension: "svg")?.path ?? bundle.url(
-        forResource: name, withExtension: "png")?.path ?? name
+    #if os(WASI)
+      p.imagePath = name
+    #else
+      let resources = bundle ?? .main
+      p.imagePath =
+        resources.url(forResource: name, withExtension: "svg")?.path ?? resources.url(
+          forResource: name, withExtension: "png")?.path ?? name
+    #endif
     p.imageTemplate = template
     p.fillWidth = flexible
     p.fillHeight = flexible

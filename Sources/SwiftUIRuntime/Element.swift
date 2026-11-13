@@ -117,6 +117,7 @@ public struct NodeProps: Equatable {
   public var scrollOffset = Point.zero
   public var placeholder = ""
   public var secure = false, multiline = false
+  package var plainTextField = false
   public var imagePath = ""
   public var imageTemplate = false
   public var path = Path()
@@ -239,6 +240,10 @@ public struct Element {
   }
 
   public var needsNativeFocus: Bool { props.focusable || focusAction != nil }
+
+  package var handlesPointerInput: Bool {
+    action != nil || doubleTapAction != nil || dragAction != nil || secondaryAction != nil
+  }
 
   package var supportsTranslation: Bool {
     if !hasDynamicLayout { return true }

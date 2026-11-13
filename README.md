@@ -2,8 +2,9 @@
 
 **Unofficial; not affiliated with Apple.**
 
-SwiftUI's declarative API shape, translated onto [nativeapi](https://github.com/libnativeapi/nativeapi)'s
-native Windows and Linux controls. This is an independent implementation, not a
+SwiftUI's declarative API shape for Windows, Linux and the browser. Desktop builds use
+[nativeapi](https://github.com/libnativeapi/nativeapi), and Web builds use WebAssembly and
+browser controls. This is an independent implementation, not a
 port of Apple's SwiftUI source, and it does not try to reproduce SwiftUI's
 renderer.
 
@@ -42,8 +43,8 @@ struct CounterView: View {
 ```
 
 That program is checked in as [`Examples/Counter`](Examples/Counter/CounterApp.swift).
-On Windows and Linux it is the CI smoke target; on macOS the same source compiles
-against Apple's SwiftUI.
+The same source builds for Windows, Linux and WebAssembly. Desktop macOS
+builds compile it against Apple's SwiftUI.
 
 ## What this is
 
@@ -59,9 +60,6 @@ not promise pixel equality. Both drawing backends supply scrolling, vector
 images, native text editing, popovers, gestures and basic animation.
 Read [docs/COMPAT.md](docs/COMPAT.md) and
 [docs/DIVERGENCES.md](docs/DIVERGENCES.md) before adopting an API.
-
-The port targets Windows and Linux. macOS applications and the Counter
-reference example use Apple's SwiftUI; runtime tests also build on macOS.
 
 ## Requirements
 
@@ -131,22 +129,56 @@ port's runner to quit a few seconds later; CI uses it to prove the window, event
 loop and renderer start. The window can also be closed normally. macOS runs the
 example under Apple's SwiftUI, where the flag has no special meaning.
 
+## Build for the web
+
+Use the Swift.org Swift 6.4.2 toolchain and matching
+[Swift SDK for WebAssembly](https://www.swift.org/documentation/articles/wasm-getting-started.html)
+on macOS or Linux, with Node.js and npm for packaging. With the toolchain selected,
+run these commands from the repository root.
+
+```bash
+swift sdk install https://download.swift.org/swift-6.4.2-release/wasm-sdk/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE_wasm.artifactbundle.tar.gz \
+  --checksum 83baca83553f8c443cda7b84800912e6e709c3acd2e7ebf277794ca5836c0da5
+./scripts/build-web.sh
+python3 -m http.server 8000 --directory .build/web
+```
+
+With Swiftly on macOS, `swiftly run ./scripts/build-web.sh +6.4.2` selects the
+Swift.org toolchain for this build. Open [localhost:8000](http://localhost:8000)
+to try Counter. Serve `.build/web` from a static HTTP host. The directory
+includes the WebAssembly module and its JavaScript dependencies.
+
+The script selects the Web package graph with `SWIFTUI_PORT_WEB=1`, uses a
+separate SwiftPM scratch directory and packages the executable with
+JavaScriptKit. It accepts an executable product name and a build configuration
+as optional arguments, for example `./scripts/build-web.sh Counter debug`.
+Web builds require no nativeapi checkout.
+
+Web apps use the same `import SwiftUI`, `@main` and `WindowGroup` entry point.
+The browser lays out the app to the size of `#swiftui-root` and uses native
+HTML controls for buttons, text fields and scrolling. See
+[docs/DIVERGENCES.md](docs/DIVERGENCES.md) for Web-specific limits.
+
+For a separate Swift package, add the `SwiftUI` product from this package and
+JavaScriptKit's `PackageToJS` command plugin dependency. Set
+`SWIFTUI_PORT_WEB=1` when invoking `swift package --swift-sdk <id> js` for your
+executable. Use [Web/index.html](Web/index.html) as a host page. For deeply
+nested views in debug builds, use the WASI stack size linker setting on
+Counter's executable target in [Package.swift](Package.swift).
+
 ## Repository layout
 
 ```
 Sources/SwiftUIRuntime/   view protocol, element tree, layout, diff, state
 Sources/SwiftUIPort/      Windows and Linux drawing backends, app runner
+Sources/SwiftUIWeb/       DOM renderer and WebAssembly app runner
 Sources/CSwiftUIWindows/  generic GDI+ display list and native button bridge
 Sources/SwiftUI/          facade: `import SwiftUI`
 Examples/Counter/         the README program
+Web/                      browser entry page
 Tests/SwiftUIRuntimeTests FakeBackend assertions for layout, diff and state
 docs/                     architecture, compatibility, divergences
 ```
-
-`SwiftUI` and `SwiftUIPort` are declared only off macOS. A package module cannot
-shadow Apple's SwiftUI, so the port's facade is absent there. The `Counter`
-example is declared on every platform: on macOS it compiles against Apple's
-SwiftUI, and on Windows/Linux it compiles against the port's facade.
 
 ## Design in one paragraph
 
@@ -154,7 +186,8 @@ A render pass evaluates bodies under scoped environment/state, resolves
 inherited properties, lays out the tree and diffs sibling identity. Backends
 receive incremental commands and the complete tree after diffing. Windows
 publishes a retained GDI+ display list. Linux paints the tree with Cairo and
-Pango in GTK. Both use the shared layout frames for native input controls.
+Pango in GTK. The Web backend retains DOM elements by node identity and
+positions them using the shared layout frames.
 FakeBackend records commands for platform-independent tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Compatibility

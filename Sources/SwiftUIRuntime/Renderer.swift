@@ -19,6 +19,7 @@ import Foundation
 @MainActor @preconcurrency public final class Renderer {
   public let backend: any RenderBackend
   public let layoutEngine: LayoutEngine
+  package var usesCustomScrollIndicators = true
 
   private let root: AnyView
   private let rootPath = ViewPath()
@@ -263,7 +264,7 @@ import Foundation
       hoverPending = true
       hoverPoint = event == 10 ? nil : point
     }
-    if event == 2,
+    if event == 2, usesCustomScrollIndicators,
       let scroll = chain.first(where: { $0.kind == .scroll && $0.props.showsScrollIndicators }),
       let content = scroll.children.first,
       point.x >= scroll.frame.maxX - 12 && content.frame.height > scroll.frame.height
@@ -419,6 +420,25 @@ import Foundation
     // Decorative canvas ink (a card's stroked overlay, for example) has no
     // native input window. It must not hide the hover target below it.
     return inside && (interactive || (!hover && painted)) ? [node] : []
+  }
+
+  package func cancelPointer() {
+    pointerDown = nil
+    dragging = nil
+    scrollDrag = nil
+  }
+
+  package func endPointerOutside(at point: CGPoint) {
+    pointerDown = nil
+    input(event: 3, point: point)
+  }
+
+  /// Synchronizes the runtime's offset with a platform scroll container.
+  package func scroll(id: NodeID, to offset: Point) {
+    guard let node = find(id, in: tree), node.kind == .scroll else { return }
+    transactionDepth += 1
+    defer { finishTransaction() }
+    scroll(node, to: offset)
   }
 
   // MARK: - Internals

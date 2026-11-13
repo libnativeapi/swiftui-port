@@ -121,7 +121,11 @@ public struct PlainButtonStyle: ButtonStyle {
 }
 extension ButtonStyle where Self == PlainButtonStyle { public static var plain: Self { Self() } }
 extension View {
-  public func textFieldStyle(_ style: PlainTextFieldStyle) -> some View { self }
+  public func textFieldStyle(_ style: PlainTextFieldStyle) -> some View {
+    TransformView(content: self) { element in
+      if element.kind == .textField { element.props.plainTextField = true }
+    }
+  }
   public func onSubmit(_ action: @escaping () -> Void) -> some View {
     TransformView(content: self) { $0.submitAction = action }
   }
