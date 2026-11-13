@@ -33,6 +33,9 @@
 
 /// Collects the current tap handlers keyed by node id.
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 public struct NodeID: Hashable, Comparable, CustomStringConvertible {
   public let rawValue: Int

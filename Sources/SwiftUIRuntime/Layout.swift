@@ -1,6 +1,9 @@
 /// Deterministic metrics for tests and backends without a text measurer.
 /// Windows supplies real font measurement to LayoutEngine instead.
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 /// A proposal-based layout shared by deterministic tests and native drawing.
 public struct TextMetrics: Equatable {

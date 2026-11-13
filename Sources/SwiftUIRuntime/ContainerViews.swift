@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 public struct ZStack<Content: View>: View, _PrimitiveView {
   public typealias Body = Never

@@ -12,6 +12,9 @@
 /// in a real app.
 
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 @MainActor @preconcurrency public final class Renderer {
   public let backend: any RenderBackend

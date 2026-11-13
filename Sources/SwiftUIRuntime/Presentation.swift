@@ -1,6 +1,9 @@
 /// Hoist presentations above scroll clipping while preserving the anchor's layout.
 
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 public enum PopoverAttachmentAnchor {
   case rect(RectAnchor)

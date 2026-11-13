@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 /// Backend-neutral vector path. Each command is M(x,y), L(x,y), C(6), or Z.
 

@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 /// Registrations belonging to content evaluated during layout. Retaining a
 /// geometry subtree must retain its state/tasks without replaying appearances.

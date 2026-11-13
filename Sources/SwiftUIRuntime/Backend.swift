@@ -18,6 +18,9 @@
 /// `SwiftUI` and `SwiftUIPort` modules are not built.
 
 import Foundation
+#if canImport(CoreGraphics)
+  import CoreGraphics
+#endif
 
 public enum RenderCommand: Equatable {
   case create(id: NodeID, kind: ElementKind, props: NodeProps)
