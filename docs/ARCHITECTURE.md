@@ -143,6 +143,8 @@ measurer or fallback metrics clears them immediately.
 
 The Linux drawing backend consumes the reconciled tree directly. It skips
 incremental commands while preserving the mounted IDs used for native input.
+When scrolling only translates an existing subtree, it updates native control
+positions and redraws the affected viewport.
 
 Integer-pixel scrolls can reuse the framebuffer's interior. The bridge verifies
 that visible paint commands and their clip stacks are exact translations, that

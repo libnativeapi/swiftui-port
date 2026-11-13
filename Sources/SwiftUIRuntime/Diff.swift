@@ -22,22 +22,30 @@ func createSubtree(
   allocator: inout NodeIDAllocator
 ) -> Element {
   var result = element
-  result.id = allocator.allocate()
+  mountSubtree(&result, parent: parent, index: index, commands: &commands, allocator: &allocator)
+  return result
+}
 
-  commands?.append(.create(id: result.id, kind: result.kind, props: result.props))
-  commands?.append(.insert(id: result.id, parent: parent, index: index))
-  commands?.append(.setFrame(id: result.id, frame: result.frame))
+func mountSubtree(
+  _ element: inout Element, parent: NodeID?, index: Int,
+  commands: inout [RenderCommand]?, allocator: inout NodeIDAllocator
+) {
+  let id = allocator.allocate()
+  element.id = id
 
-  for childIndex in result.children.indices {
-    result.children[childIndex] = createSubtree(
-      result.children[childIndex],
-      parent: result.id,
+  commands?.append(.create(id: id, kind: element.kind, props: element.props))
+  commands?.append(.insert(id: id, parent: parent, index: index))
+  commands?.append(.setFrame(id: id, frame: element.frame))
+
+  for childIndex in element.children.indices {
+    mountSubtree(
+      &element.children[childIndex],
+      parent: id,
       index: childIndex,
       commands: &commands,
       allocator: &allocator
     )
   }
-  return result
 }
 func diffElement(
   old: Element?,
@@ -47,32 +55,42 @@ func diffElement(
   commands: inout [RenderCommand]?,
   allocator: inout NodeIDAllocator
 ) -> Element {
+  var result = new
+  reconcile(old: old, new: &result, parent: parent, index: index, commands: &commands,
+            allocator: &allocator)
+  return result
+}
+
+func reconcile(
+  old: Element?, new: inout Element, parent: NodeID?, index: Int,
+  commands: inout [RenderCommand]?, allocator: inout NodeIDAllocator
+) {
   guard let old, old.key == new.key else {
-    return createSubtree(
-      new,
+    mountSubtree(
+      &new,
       parent: parent,
       index: index,
       commands: &commands,
       allocator: &allocator
     )
+    return
   }
 
   // Same key, different kind: the native control cannot be reused. Replace it
   // in place rather than trying to mutate one control into another.
   guard old.kind == new.kind else {
     commands?.append(.remove(id: old.id))
-    return createSubtree(
-      new,
+    mountSubtree(
+      &new,
       parent: parent,
       index: index,
       commands: &commands,
       allocator: &allocator
     )
+    return
   }
-  if new.reusesLayout && old.id == new.id && old.frame == new.frame { return new }
-
-  var result = new
-  result.id = old.id
+  if new.reusesLayout && old.id == new.id && old.frame == new.frame { return }
+  new.id = old.id
 
   if commands != nil, old.props != new.props {
     commands?.append(.setProps(id: old.id, props: new.props))
@@ -81,31 +99,26 @@ func diffElement(
     commands?.append(.setFrame(id: old.id, frame: new.frame))
   }
 
-  result.children = diffChildren(
-    old: old.children,
-    new: new.children,
-    parent: old.id,
-    commands: &commands,
-    allocator: &allocator
-  )
-  return result
+  if old.children.count == new.children.count
+    && zip(old.children, new.children).allSatisfy({ $0.key == $1.key })
+  {
+    for i in new.children.indices {
+      reconcile(old: old.children[i], new: &new.children[i], parent: old.id, index: i,
+                commands: &commands, allocator: &allocator)
+    }
+  } else {
+    new.children = diffChildren(
+      old: old.children, new: new.children, parent: old.id, commands: &commands,
+      allocator: &allocator)
+  }
 }
-func diffChildren(
+private func diffChildren(
   old: [Element],
   new: [Element],
   parent: NodeID,
   commands: inout [RenderCommand]?,
   allocator: inout NodeIDAllocator
 ) -> [Element] {
-  // State/style changes normally preserve the sibling order. Avoid building
-  // key dictionaries and scanning a move list for every wrapper in that case.
-  if old.count == new.count && zip(old, new).allSatisfy({ $0.key == $1.key }) {
-    return new.indices.map { index in
-      diffElement(
-        old: old[index], new: new[index], parent: parent, index: index,
-        commands: &commands, allocator: &allocator)
-    }
-  }
   var oldByKey: [ElementKey: Element] = [:]
   for child in old where oldByKey[child.key] == nil {
     oldByKey[child.key] = child

@@ -43,6 +43,8 @@ public protocol RenderBackend: AnyObject {
   /// Content and actions are unchanged; only a scroll offset and descendant
   /// frames moved. Backends may retain animation/control property state.
   func didScroll(_ root: Element)
+  /// A translation-only scroll can limit damage to the updated viewport.
+  func didScroll(_ root: Element, viewport: Rect)
   /// Current pointer in root coordinates, or nil when it is outside/occluded.
   /// Headless backends use the supplied input point.
   func pointerLocation(fallback: CGPoint) -> CGPoint?
@@ -100,6 +102,7 @@ extension RenderBackend {
   public func didMeasureRender(_ timings: [String: Double]) {}
   public func didRender(_ root: Element) {}
   public func didScroll(_ root: Element) { didRender(root) }
+  public func didScroll(_ root: Element, viewport: Rect) { didScroll(root) }
   public func pointerLocation(fallback: CGPoint) -> CGPoint? { fallback }
   public var transactionHandler: ((() -> Void) -> Void)? {
     get { nil }

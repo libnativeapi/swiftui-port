@@ -97,9 +97,23 @@ public struct LazyVGrid<Content: View>: View {
     self.spacing = spacing ?? 8
     self.content = content()
   }
-  public var body: some View { GridLayout(columns: columns, spacing: spacing) { content } }
+  public var body: some View { GridContent(layout: GridLayout(columns: columns, spacing: spacing), content: content) }
 }
-private struct GridLayout: Layout {
+
+private struct GridContent<Content: View>: View, _PrimitiveView {
+  typealias Body = Never
+  let layout: GridLayout
+  let content: Content
+  var body: Never { fatalError("Grid content is primitive") }
+
+  func _makeElement(path: ViewPath) -> Element {
+    var node = Element(kind: .customLayout, children: flattenChildren(_render(content, path: path)))
+    node.layout = layout
+    return node
+  }
+}
+private struct GridLayout: _LayoutBridge {
+  var translatesWithBounds: Bool { true }
   let columns: [GridItem]
   let spacing: CGFloat
   func widths(_ proposal: ProposedViewSize) -> [CGFloat] {
@@ -128,17 +142,20 @@ private struct GridLayout: Layout {
       }
     }
   }
-  func frames(_ proposal: ProposedViewSize, subviews: Subviews) -> [CGRect] {
+  func frames(_ proposal: ProposedViewSize, children: [Element], engine: LayoutEngine) -> [CGRect] {
     let widths = widths(proposal)
     guard !widths.isEmpty else { return [] }
     var frames: [CGRect] = []
     var y: CGFloat = 0
-    for start in stride(from: 0, to: subviews.count, by: widths.count) {
-      let end = min(start + widths.count, subviews.count)
-      let heights = (start..<end).map {
-        subviews[$0].sizeThatFits(ProposedViewSize(width: widths[$0 - start], height: nil)).height
+    frames.reserveCapacity(children.count)
+    for start in stride(from: 0, to: children.count, by: widths.count) {
+      let end = min(start + widths.count, children.count)
+      var height: CGFloat = -.infinity
+      for i in start..<end {
+        let size = engine.sizeThatFits(
+          children[i], proposal: ProposedViewSize(width: widths[i - start], height: nil))
+        height = max(height, size.height)
       }
-      let height = heights.max() ?? 0
       var x: CGFloat = 0
       for i in start..<end {
         let w = widths[i - start]
@@ -149,18 +166,24 @@ private struct GridLayout: Layout {
     }
     return frames
   }
-  func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-    let frames = frames(proposal, subviews: subviews)
-    return CGSize(
-      width: frames.map { $0.maxX }.max() ?? 0, height: frames.map { $0.maxY }.max() ?? 0)
+  func measure(_ proposal: ProposedViewSize, children: [Element], engine: LayoutEngine) -> CGSize {
+    let slots = frames(proposal, children: children, engine: engine)
+    guard let first = slots.first else { return .zero }
+    var result = CGSize(width: first.maxX, height: first.maxY)
+    for frame in slots.dropFirst() {
+      result.width = max(result.width, frame.maxX)
+      result.height = max(result.height, frame.maxY)
+    }
+    return result
   }
-  func placeSubviews(
-    in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
-  ) {
-    for (i, r) in frames(proposal, subviews: subviews).enumerated() {
-      subviews[i].place(
-        at: CGPoint(x: bounds.minX + r.minX, y: bounds.minY + r.minY),
-        proposal: ProposedViewSize(r.size))
+  func placements(_ bounds: CGRect, children: [Element], engine: LayoutEngine) -> [CGRect] {
+    let slots = frames(ProposedViewSize(bounds.size), children: children, engine: engine)
+    return children.indices.map { index in
+      guard index < slots.count else { return .zero }
+      let slot = slots[index]
+      let size = engine.sizeThatFits(children[index], proposal: ProposedViewSize(slot.size))
+      return CGRect(x: bounds.minX + slot.minX, y: bounds.minY + slot.minY,
+                    width: size.width, height: size.height)
     }
   }
 }

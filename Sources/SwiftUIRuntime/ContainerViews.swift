@@ -128,13 +128,9 @@ public struct GeometryReader<Content: View>: View, _PrimitiveView {
       let saved = EnvironmentValues.current
       EnvironmentValues.current = environment
       defer { EnvironmentValues.current = saved }
-      return normalize(
-        _render(
-          content(
-            GeometryProxy(
-              snapshot: GeometrySnapshot.active
-                ?? GeometrySnapshot(rect: rect, namedOrigins: GeometryContext.current))),
-          path: path.appending(index: 0)))
+      let snapshot = GeometrySnapshot.active
+        ?? GeometrySnapshot(rect: rect, namedOrigins: GeometryContext.current)
+      return normalize(_render(content(GeometryProxy(snapshot: snapshot)), path: path.appending(index: 0)))
     }
     return result
   }
@@ -191,8 +187,12 @@ extension Layout {
   }
 }
 protocol _LayoutBridge {
+  var translatesWithBounds: Bool { get }
   func measure(_ proposal: ProposedViewSize, children: [Element], engine: LayoutEngine) -> CGSize
   func placements(_ bounds: CGRect, children: [Element], engine: LayoutEngine) -> [CGRect]
+}
+extension _LayoutBridge {
+  var translatesWithBounds: Bool { false }
 }
 struct LayoutBridge<L: Layout>: _LayoutBridge {
   let layout: L

@@ -98,9 +98,10 @@ public struct LayoutEngine {
   /// Re-run opaque layout placement before retaining translated content. A
   /// custom Layout may depend on bounds.origin; never assume it is invariant.
   func canTranslateScroll(_ element: Element, dx: Double, dy: Double) -> Bool {
+    if !element.hasDynamicLayout { return true }
     if element.geometrySnapshot?.dependsOnPosition == true { return false }
     if element.kind == .presentation && element.children.count > 1 { return false }
-    if let layout = element.layout {
+    if let layout = element.layout, !layout.translatesWithBounds {
       var engine = self
       engine.pass = Pass(prunes: false)
       let bounds = CGRect(
@@ -161,18 +162,21 @@ public struct LayoutEngine {
       return
     }
     let previous = previousGeometry.flatMap { $0.kind == element.kind ? $0 : nil }
+    var dynamic = element.geometryBuilder != nil || element.kind == .presentation || element.layout != nil
+    var presentation = element.kind == .presentation
+    var preferences = element.geometryBuilder != nil || !element.preferences.isEmpty
+      || element.preferenceAction != nil
     for i in element.children.indices {
       let priorChild = previous.flatMap { i < $0.children.count ? $0.children[i] : nil }
       identify(&element.children[i], previousGeometry: priorChild)
+      let child = element.children[i]
+      dynamic = dynamic || child.hasDynamicLayout
+      presentation = presentation || child.hasPresentation
+      preferences = preferences || child.hasPreferences
     }
-    element.hasDynamicLayout =
-      element.geometryBuilder != nil || element.kind == .presentation || element.layout != nil
-      || element.children.contains { $0.hasDynamicLayout }
-    element.hasPresentation =
-      element.kind == .presentation || element.children.contains { $0.hasPresentation }
-    element.hasPreferences =
-      element.geometryBuilder != nil || !element.preferences.isEmpty
-      || element.preferenceAction != nil || element.children.contains { $0.hasPreferences }
+    element.hasDynamicLayout = dynamic
+    element.hasPresentation = presentation
+    element.hasPreferences = preferences
     let opaqueLayout =
       element.layout != nil || element.horizontalGuide != nil || element.verticalGuide != nil
     if element.evaluationID != 0,
@@ -385,14 +389,18 @@ public struct LayoutEngine {
       }
     case .fragment, .container:
       let horizontal = e.kind == .container(.horizontal)
-      let children = e.children.filter(\.props.visible)
       let childOffer = ProposedViewSize(
         width: horizontal ? nil : offer.width, height: horizontal ? offer.height : nil)
-      let sizes = children.map { measure($0, childOffer) }
-      let main =
-        sizes.reduce(0) { $0 + (horizontal ? $1.width : $1.height) } + Double(
-          max(0, sizes.count - 1)) * p.spacing
-      let cross = sizes.reduce(0) { max($0, horizontal ? $1.height : $1.width) }
+      var count = 0
+      var main = 0.0
+      var cross = 0.0
+      for child in e.children where child.props.visible {
+        let measured = measure(child, childOffer)
+        count += 1
+        main += horizontal ? measured.width : measured.height
+        cross = max(cross, horizontal ? measured.height : measured.width)
+      }
+      main += Double(max(0, count - 1)) * p.spacing
       size = horizontal ? Size(width: main, height: cross) : Size(width: cross, height: main)
     case .shape, .path, .gradient: size = Size(width: offer.width ?? 0, height: offer.height ?? 0)
     case .spacer, .empty: break

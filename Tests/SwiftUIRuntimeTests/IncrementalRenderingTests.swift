@@ -338,8 +338,38 @@ final class IncrementalRenderingTests: XCTestCase {
     var tapHandler: ((NodeID) -> Void)?
     var publications = 0
     var commands: [RenderCommand] = []
+    var scrollViewport: Rect?
     func perform(_ commands: [RenderCommand]) { self.commands = commands }
     func didRender(_ root: Element) { publications += 1 }
+    func didScroll(_ root: Element, viewport: Rect) {
+      scrollViewport = viewport
+      didRender(root)
+    }
+  }
+
+  func testGridScrollReportsOnlyItsViewport() throws {
+    StateRegistry.shared.reset()
+    let backend = PublicationBackend()
+    let renderer = Renderer(
+      backend: backend,
+      root: AnyView(
+        VStack(spacing: 0) {
+          Text("Header").frame(height: 40)
+          ScrollView {
+            LazyVGrid(columns: [GridItem(.fixed(100))]) {
+              ForEach(0..<10) { Text("Grid row \($0)").frame(width: 100, height: 48) }
+            }
+          }
+        }), size: Size(width: 240, height: 180))
+    renderer.mount()
+    let gridRow = try XCTUnwrap(findNode(in: renderer.tree!, text: "Grid row 1"))
+    let viewport = try XCTUnwrap(findNode(in: renderer.tree!, kind: .scroll)?.frame)
+    renderer.input(event: 5, point: CGPoint(x: 120, y: 70), value: -120)
+    let updated = try XCTUnwrap(findNode(in: renderer.tree!, text: "Grid row 1"))
+    XCTAssertEqual(backend.scrollViewport, viewport)
+    XCTAssertEqual(updated.id, gridRow.id)
+    XCTAssertEqual(updated.frame.minY, gridRow.frame.minY - 48, accuracy: 0.0001)
+    XCTAssertEqual(findNode(in: renderer.tree!, text: "Header")?.frame.minY, 10)
   }
   private final class DeferredBackend: RenderBackend {
     var tapHandler: ((NodeID) -> Void)?

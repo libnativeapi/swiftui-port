@@ -92,10 +92,10 @@ import Foundation
     }
 
     isRendering = true
-    let newTree = buildTree()
+    var mountedTree = buildTree()
     var commands: [RenderCommand]? = backend.needsRenderCommands ? [] : nil
-    let mountedTree = createSubtree(
-      newTree,
+    mountSubtree(
+      &mountedTree,
       parent: nil,
       index: 0,
       commands: &commands,
@@ -103,7 +103,7 @@ import Foundation
     )
     mounted = mountedTree
     tree = mountedTree
-    rebuildActions(from: mountedTree)
+    refreshHoverActions()
     lastCommands = commands ?? []
     if let commands { backend.perform(commands) }
     backend.didRender(mountedTree)
@@ -196,9 +196,8 @@ import Foundation
     }
     transactionDepth += 1
     defer { finishTransaction() }
-    guard let node = find(id, in: tree) else { return }
     var chain: [Element] = []
-    _ = ancestry(id, in: tree, into: &chain)
+    guard ancestry(id, in: tree, into: &chain), let node = chain.first else { return }
     switch interaction {
     case .hover(let value):
       if value && node.props.enabled {
@@ -213,14 +212,21 @@ import Foundation
     }
   }
   private func updateHover(_ chain: [Element]) {
+    let ids = chain.map(\.id)
+    guard hoveredNodeIDs != ids else { return }
     let previous = Set(hoveredNodeIDs)
-    let next = Set(chain.map(\.id))
+    let next = Set(ids)
     let old = hoveredNodeIDs
-    hoveredNodeIDs = chain.map(\.id)
+    hoveredNodeIDs = ids
     for id in old where !next.contains(id) {
-      hoverActions[id]?(false)
+      hoverActions.removeValue(forKey: id)?(false)
     }
-    for node in chain where !previous.contains(node.id) { node.hoverAction?(true) }
+    for node in chain where !previous.contains(node.id) {
+      if let action = node.hoverAction {
+        hoverActions[node.id] = action
+        action(true)
+      }
+    }
   }
   private func find(_ id: NodeID, in node: Element?) -> Element? {
     guard let node else { return nil }
@@ -453,13 +459,13 @@ import Foundation
     unpublishedOffsets[node.id] = offset
     // Global/named geometry and active presentations require a full pass.
     // Opaque layouts must reproduce exactly translated placement proposals.
-    let translates = node.children.allSatisfy {
-      layoutEngine.canTranslateScroll(
-        $0, dx: node.props.scrollOffset.x - offset.x,
-        dy: node.props.scrollOffset.y - offset.y)
-    }
     if !needsRender || pendingScroll?.id == node.id, !isRendering, let key = node.scrollStateKey,
-      translates, mounted?.hasActivePresentation == false
+      mounted?.hasActivePresentation == false,
+      node.children.allSatisfy({
+        layoutEngine.canTranslateScroll(
+          $0, dx: node.props.scrollOffset.x - offset.x,
+          dy: node.props.scrollOffset.y - offset.y)
+      })
     {
       pendingScroll = (node.id, key, offset)
     } else {
@@ -473,6 +479,8 @@ import Foundation
     pendingScroll = nil
     var commands: [RenderCommand]? = backend.needsRenderCommands ? [] : nil
     let started = Date.timeIntervalSinceReferenceDate
+    let fullViewport = updated.frame
+    var viewport = fullViewport
     func translate(
       _ node: inout Element, dx: Double, dy: Double,
       origins: [AnyHashable: CGPoint]
@@ -497,6 +505,11 @@ import Foundation
     }
     func move(_ node: inout Element) -> Bool {
       if node.id == pending.id {
+        if node.props.clipped, node.props.rotation == 0, node.props.scaleX == 1,
+           node.props.scaleY == 1
+        {
+          viewport = node.frame
+        }
         let old = node.props.scrollOffset
         node.props.scrollOffset = pending.offset
         node.reusesLayout = false
@@ -515,6 +528,9 @@ import Foundation
       for i in node.children.indices {
         if move(&node.children[i]) {
           node.reusesLayout = false
+          if node.props.rotation != 0 || node.props.scaleX != 1 || node.props.scaleY != 1 {
+            viewport = fullViewport
+          }
           return true
         }
       }
@@ -529,7 +545,7 @@ import Foundation
     lastTimings = ["scroll.translate": (Date.timeIntervalSinceReferenceDate - started) * 1000]
     let published = Date.timeIntervalSinceReferenceDate
     if let commands { backend.perform(commands) }
-    backend.didScroll(updated)
+    backend.didScroll(updated, viewport: viewport)
     lastTimings["backend"] = (Date.timeIntervalSinceReferenceDate - published) * 1000
     isRendering = false
     return true
@@ -544,7 +560,9 @@ import Foundation
     lastTimings["evaluate"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     start = Date.timeIntervalSinceReferenceDate
     element = normalize(element, previous: normalized)
+    lastTimings["normalize"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     normalized = element
+    start = Date.timeIntervalSinceReferenceDate
     if let animation = pendingAnimation ?? AnimationContext.current {
       element.props.animation = animation
     }
@@ -572,12 +590,12 @@ import Foundation
     }
 
     isRendering = true
-    let newTree = buildTree()
+    var mountedTree = buildTree()
     var start = Date.timeIntervalSinceReferenceDate
     var commands: [RenderCommand]? = backend.needsRenderCommands ? [] : nil
-    let mountedTree = diffElement(
+    reconcile(
       old: old,
-      new: newTree,
+      new: &mountedTree,
       parent: nil,
       index: 0,
       commands: &commands,
@@ -585,7 +603,7 @@ import Foundation
     )
     mounted = mountedTree
     tree = mountedTree
-    rebuildActions(from: mountedTree)
+    refreshHoverActions()
     lastCommands = commands ?? []
     lastTimings["diff"] = (Date.timeIntervalSinceReferenceDate - start) * 1000
     start = Date.timeIntervalSinceReferenceDate
@@ -595,13 +613,18 @@ import Foundation
     LifecycleRegistry.shared.commit()
     isRendering = false
   }
-  private func rebuildActions(from element: Element) {
-    var hovered: [NodeID: (Bool) -> Void] = [:]
-    func collect(_ node: Element) {
-      if let action = node.hoverAction { hovered[node.id] = action }
-      node.children.forEach(collect)
+  private func refreshHoverActions() {
+    guard let target = hoveredNodeIDs.first else { return }
+    // The hit path is leaf-first. A single ancestry lookup refreshes callbacks
+    // whose captures changed while the pointer stayed in place.
+    var chain: [Element] = []
+    if ancestry(target, in: tree, into: &chain) {
+      for id in hoveredNodeIDs {
+        let node = chain.first { $0.id == id } ?? find(id, in: tree)
+        hoverActions[id] = node?.hoverAction
+      }
+      return
     }
-    collect(element)
-    hoverActions = hovered
+    for id in hoveredNodeIDs { hoverActions[id] = find(id, in: tree)?.hoverAction }
   }
 }

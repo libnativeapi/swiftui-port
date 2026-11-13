@@ -247,7 +247,7 @@ public struct Element {
 
   package var supportsTranslation: Bool {
     if !hasDynamicLayout { return true }
-    if (kind == .presentation && children.count > 1) || layout != nil
+    if (kind == .presentation && children.count > 1) || layout?.translatesWithBounds == false
       || geometrySnapshot?.dependsOnPosition == true
     {
       return false

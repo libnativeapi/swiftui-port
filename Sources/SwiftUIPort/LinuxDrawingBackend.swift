@@ -150,7 +150,9 @@ public final class LinuxDrawingBackend: RenderBackend {
   public func requestRender(_ render: @escaping () -> Void) -> Bool {
     queuedRender = render
     if updateSource == 0 {
-      updateSource = g_idle_add({ data in
+      // Publish pending state ahead of GTK's animation redraws. Input and
+      // pointer coalescing still run first at the normal event priority.
+      updateSource = g_idle_add_full(G_PRIORITY_HIGH_IDLE, { data in
         guard let data else { return 0 }
         let backend = Unmanaged<LinuxDrawingBackend>.fromOpaque(data).takeUnretainedValue()
         backend.updateSource = 0
@@ -158,7 +160,7 @@ public final class LinuxDrawingBackend: RenderBackend {
         backend.queuedRender = nil
         update?()
         return 0
-      }, Unmanaged.passUnretained(self).toOpaque())
+      }, Unmanaged.passUnretained(self).toOpaque(), nil)
     }
     return updateSource != 0
   }
@@ -167,18 +169,17 @@ public final class LinuxDrawingBackend: RenderBackend {
   public var needsRenderCommands: Bool { false }
 
   public func didRender(_ root: Element) {
-    updateMotions(root)
-    controlBranches.removeAll(keepingCapacity: true)
-    modal = nil
-    indexControls(root)
+    preparePublication(root)
     publish(root)
   }
 
-  public func didScroll(_ root: Element) { publish(root) }
+  public func didScroll(_ root: Element, viewport: Rect) {
+    publish(root, damage: viewport)
+  }
 
   public func didMeasureRender(_ timings: [String: Double]) {
     if trace {
-      let stages = ["evaluate", "environment", "layout", "layout.identify", "layout.place",
+      let stages = ["evaluate", "normalize", "environment", "layout", "layout.identify", "layout.place",
                     "layout.geometry", "layout.prune", "finalize", "diff", "scroll.translate", "backend"]
       log("GTK render " + stages.compactMap { name in
         timings[name].map { "\(name)=\($0)" }
@@ -190,7 +191,7 @@ public final class LinuxDrawingBackend: RenderBackend {
     FileHandle.standardError.write(Data((line + "\n").utf8))
   }
 
-  private func publish(_ root: Element) {
+  private func publish(_ root: Element, damage: Rect? = nil) {
     self.root = root
     updateVisibleMotions(in: root)
     applying = true
@@ -199,7 +200,8 @@ public final class LinuxDrawingBackend: RenderBackend {
     var liveButtons = Set<NodeID>()
     var focus: NodeID?
     updateControls(root, clip: root.frame, background: .white, allowed: true, focus: &focus, modal: modal,
-                   inModal: false, accessibilityLabel: "", live: &live, liveButtons: &liveButtons)
+                   inModal: false, accessibilityLabel: "", refreshContent: damage == nil,
+                   live: &live, liveButtons: &liveButtons)
     for id in controls.keys.filter({ !live.contains($0) }) { controls.removeValue(forKey: id) }
     for id in buttons.keys.filter({ !liveButtons.contains($0) }) { buttons.removeValue(forKey: id) }
     if let focus {
@@ -209,21 +211,38 @@ public final class LinuxDrawingBackend: RenderBackend {
         gtk_widget_grab_focus(button.widget)
       }
     }
-    gtk_widget_queue_draw(canvas)
+    if let damage, motionDamage.isEmpty {
+      let x = floor(damage.minX), y = floor(damage.minY)
+      gtk_widget_queue_draw_area(canvas, pixels(x), pixels(y),
+                                 pixels(ceil(damage.maxX) - x), pixels(ceil(damage.maxY) - y))
+    } else {
+      gtk_widget_queue_draw(canvas)
+    }
   }
 
-  private func updateMotions(_ root: Element) {
+  private func preparePublication(_ root: Element) {
     let now = Date.timeIntervalSinceReferenceDate
     var next: [NodeID: LinuxDrawing.DrawingValues] = [:]
     next.reserveCapacity(prior.count)
-    func visit(_ node: Element, animation: Animation?) {
+    controlBranches.removeAll(keepingCapacity: true)
+    modal = nil
+    @discardableResult func visit(_ node: Element, animation: Animation?) -> Bool {
       let animation = node.props.animation ?? animation
       let values = LinuxDrawing.DrawingValues(node.props)
       if let animation, animation.duration > 0, let old = prior[node.id], old != values {
         motions[node.id] = LinuxDrawing.Motion(from: old, animation: animation, start: now + animation.delay)
       }
       next[node.id] = values
-      for child in node.children { visit(child, animation: animation) }
+      if modal == nil, node.props.accessibilityTraits & AccessibilityTraits.isModal.rawValue != 0 {
+        modal = node.id
+      }
+      var hasControls = node.kind == .textField || node.kind == .button || node.kind == .styledButton
+        || node.props.focusable
+      for child in node.children.reversed() {
+        if visit(child, animation: animation) { hasControls = true }
+      }
+      if hasControls { controlBranches.insert(node.id) }
+      return hasControls
     }
     visit(root, animation: nil)
     prior = next
@@ -291,21 +310,9 @@ public final class LinuxDrawingBackend: RenderBackend {
     if !applying { interactionHandler?(id, .focus(gained)) }
   }
 
-  @discardableResult private func indexControls(_ node: Element) -> Bool {
-    let isModal = node.props.accessibilityTraits & AccessibilityTraits.isModal.rawValue != 0
-    if isModal && modal == nil { modal = node.id }
-    var hasControls = node.kind == .textField || node.kind == .button || node.kind == .styledButton
-      || node.props.focusable
-    for child in node.children.reversed() {
-      if indexControls(child) { hasControls = true }
-    }
-    if hasControls { controlBranches.insert(node.id) }
-    return hasControls
-  }
-
   private func updateControls(_ node: Element, clip: Rect, background: SwiftUIRuntime.Color,
                               allowed: Bool, focus: inout NodeID?, modal: NodeID?, inModal: Bool,
-                              accessibilityLabel: String,
+                              accessibilityLabel: String, refreshContent: Bool,
                               live: inout Set<NodeID>, liveButtons: inout Set<NodeID>) {
     guard controlBranches.contains(node.id) else { return }
     let props = node.props
@@ -318,29 +325,35 @@ public final class LinuxDrawingBackend: RenderBackend {
     let active = allowed && (modal == nil || inModal) && !visible.isEmpty
     if node.kind == .textField, active || controls[node.id] != nil {
       live.insert(node.id)
-      if controls[node.id] == nil {
+      let isNew = controls[node.id] == nil
+      if isNew {
         controls[node.id] = Editor(node.id, props: props, host: typed(host, GtkFixed.self), backend: self)
       }
       if let editor = controls[node.id] {
-        editor.update(props, visible: active ? visible : .zero, background: background, label: accessibilityLabel)
+        if refreshContent || isNew { editor.updateContent(props, background: background, label: accessibilityLabel) }
+        editor.updatePlacement(props, visible: active ? visible : .zero)
         if props.focusRequested && active { focus = node.id }
       }
     }
     if node.kind != .textField, (node.kind == .button || node.kind == .styledButton || props.focusable),
        active || buttons[node.id] != nil {
       liveButtons.insert(node.id)
-      if buttons[node.id] == nil {
+      let isNew = buttons[node.id] == nil
+      if isNew {
         buttons[node.id] = Activation(node.id, host: typed(host, GtkFixed.self), backend: self)
       }
       if let control = buttons[node.id] {
-        control.update(node, visible: active ? visible : .zero, enabled: props.enabled && active)
+        if refreshContent || isNew { control.updateContent(node) }
+        control.updatePlacement(visible: active ? visible : .zero, enabled: props.enabled && active,
+                                accessibilityHidden: props.accessibilityHidden)
         if props.focusRequested && active { focus = node.id }
       }
     }
     for child in LinuxDrawing.orderedChildren(node) {
       updateControls(child, clip: clip, background: background, allowed: allowed,
                      focus: &focus, modal: modal, inModal: inModal,
-                     accessibilityLabel: accessibilityLabel, live: &live, liveButtons: &liveButtons)
+                     accessibilityLabel: accessibilityLabel, refreshContent: refreshContent,
+                     live: &live, liveButtons: &liveButtons)
       if props.focusRequested && active && focus == nil {
         focus = firstFocusable(child)
       }
@@ -365,13 +378,13 @@ public final class LinuxDrawingBackend: RenderBackend {
   private func queuePointer(_ event: Int, point: CGPoint, modifiers: EventModifiers) {
     pendingPointer = (event, point, modifiers)
     guard pointerSource == 0 else { return }
-    pointerSource = g_idle_add({ data in
+    pointerSource = g_idle_add_full(G_PRIORITY_DEFAULT, { data in
       guard let data else { return 0 }
       let backend = Unmanaged<LinuxDrawingBackend>.fromOpaque(data).takeUnretainedValue()
       backend.pointerSource = 0
       backend.flushPointer()
       return 0
-    }, Unmanaged.passUnretained(self).toOpaque())
+    }, Unmanaged.passUnretained(self).toOpaque(), nil)
   }
 
   fileprivate func pointer(_ event: UnsafeMutablePointer<GdkEvent>, origin: SwiftUIRuntime.Point = .zero,
@@ -550,7 +563,7 @@ private final class Activation {
     return x >= 0 && y >= 0 && x < placement.width && y < placement.height
   }
 
-  func update(_ node: Element, visible: Rect, enabled: Bool) {
+  func updateContent(_ node: Element) {
     func label(_ element: Element) -> String {
       if !element.props.accessibilityLabel.isEmpty { return element.props.accessibilityLabel }
       if !element.props.text.isEmpty { return element.props.text }
@@ -565,6 +578,9 @@ private final class Activation {
       help = node.props.help
       gtk_widget_set_tooltip_text(widget, node.props.help.isEmpty ? nil : node.props.help)
     }
+  }
+
+  func updatePlacement(visible: Rect, enabled: Bool, accessibilityHidden: Bool) {
     if placement != visible {
       placement = visible
       gtk_fixed_move(host, widget, pixels(visible.minX), pixels(visible.minY))
@@ -572,7 +588,7 @@ private final class Activation {
     }
     let sensitive: gboolean = enabled ? 1 : 0
     if gtk_widget_get_sensitive(widget) != sensitive { gtk_widget_set_sensitive(widget, sensitive) }
-    let shown: gboolean = !visible.isEmpty && !node.props.accessibilityHidden ? 1 : 0
+    let shown: gboolean = !visible.isEmpty && !accessibilityHidden ? 1 : 0
     if gtk_widget_get_visible(widget) != shown { gtk_widget_set_visible(widget, shown) }
   }
 }
@@ -663,7 +679,7 @@ private final class Editor {
     g_object_unref(widget)
   }
 
-  func update(_ props: NodeProps, visible: Rect, background: SwiftUIRuntime.Color, label: String) {
+  func updateContent(_ props: NodeProps, background: SwiftUIRuntime.Color, label: String) {
     if text() != props.text {
       if multiline {
         gtk_text_buffer_set_text(gtk_text_view_get_buffer(typed(input, GtkTextView.self)), props.text, -1)
@@ -695,6 +711,9 @@ private final class Editor {
       style = css
       gtk_css_provider_load_from_data(provider, css, -1, nil)
     }
+  }
+
+  func updatePlacement(_ props: NodeProps, visible: Rect) {
     if placement != visible {
       placement = visible
       gtk_fixed_move(host, widget, pixels(visible.minX), pixels(visible.minY))
