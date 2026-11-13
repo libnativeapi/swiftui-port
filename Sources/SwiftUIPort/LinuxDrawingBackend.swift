@@ -19,6 +19,9 @@ public final class LinuxDrawingBackend: RenderBackend {
   private let surface: Widget
   private let drawing = LinuxDrawing()
   private var root: Element?
+  private var canvasImage: OpaquePointer?
+  private var canvasSize: (width: Int32, height: Int32, scale: Int32)?
+  private var canvasDamage: Rect?
   private var listener: ListenerId?
   private var queuedRender: (() -> Void)?
   private var updateSource: UInt32 = 0
@@ -78,15 +81,7 @@ public final class LinuxDrawingBackend: RenderBackend {
     let draw: @convention(c) (Widget?, OpaquePointer?, UnsafeMutableRawPointer?) -> gboolean = { _, cairo, data in
       guard let cairo, let data else { return 0 }
       let backend = Unmanaged<LinuxDrawingBackend>.fromOpaque(data).takeUnretainedValue()
-      if let tree = backend.root {
-        let start = backend.trace ? g_get_monotonic_time() : 0
-        var x1 = 0.0, y1 = 0.0, x2 = 0.0, y2 = 0.0
-        cairo_clip_extents(cairo, &x1, &y1, &x2, &y2)
-        let damage = Rect(x: x1, y: y1, width: x2 - x1, height: y2 - y1)
-        backend.drawing.paint(tree, in: cairo, clip: tree.frame, damage: damage, motions: backend.motions,
-                              now: Date.timeIntervalSinceReferenceDate)
-        if backend.trace { backend.log("GTK paint \(Double(g_get_monotonic_time() - start) / 1000)") }
-      }
+      backend.paint(in: cairo)
       return 0
     }
     signals.append(g_signal_connect_data(canvas, "draw", unsafeBitCast(draw, to: GCallback.self), context, nil, .init(rawValue: 0)))
@@ -120,6 +115,7 @@ public final class LinuxDrawingBackend: RenderBackend {
   }
 
   deinit {
+    if let canvasImage { cairo_surface_destroy(canvasImage) }
     if updateSource != 0 { g_source_remove(updateSource) }
     if pointerSource != 0 { g_source_remove(pointerSource) }
     if tick != 0 { gtk_widget_remove_tick_callback(canvas, tick) }
@@ -191,8 +187,74 @@ public final class LinuxDrawingBackend: RenderBackend {
     FileHandle.standardError.write(Data((line + "\n").utf8))
   }
 
+  private func paint(in context: OpaquePointer) {
+    guard let root else { return }
+    let start = trace ? g_get_monotonic_time() : 0
+    let size = (width: gtk_widget_get_allocated_width(canvas),
+                height: gtk_widget_get_allocated_height(canvas),
+                scale: gtk_widget_get_scale_factor(canvas))
+    guard size.width > 0, size.height > 0 else { return }
+    if canvasImage == nil || canvasSize?.width != size.width || canvasSize?.height != size.height
+      || canvasSize?.scale != size.scale
+    {
+      if let canvasImage { cairo_surface_destroy(canvasImage) }
+      canvasImage = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, pixels(Double(size.width) * Double(size.scale)),
+                                               pixels(Double(size.height) * Double(size.scale)))
+      if let canvasImage {
+        cairo_surface_set_device_scale(canvasImage, Double(size.scale), Double(size.scale))
+      }
+      canvasSize = size
+      canvasDamage = Rect(x: 0, y: 0, width: Double(size.width), height: Double(size.height))
+    }
+    let damage = canvasDamage
+    canvasDamage = nil
+    let now = Date.timeIntervalSinceReferenceDate
+    if let image = canvasImage, cairo_surface_status(image) == CAIRO_STATUS_SUCCESS {
+      if let damage, !damage.isEmpty, let buffer = cairo_create(image) {
+        defer { cairo_destroy(buffer) }
+        cairo_rectangle(buffer, damage.minX, damage.minY, damage.width, damage.height)
+        cairo_clip(buffer)
+        cairo_set_operator(buffer, CAIRO_OPERATOR_CLEAR)
+        cairo_paint(buffer)
+        cairo_set_operator(buffer, CAIRO_OPERATOR_OVER)
+        drawing.paint(root, in: buffer, clip: root.frame, damage: damage, motions: motions, now: now)
+      }
+      cairo_save(context)
+      cairo_set_source_surface(context, image, 0, 0)
+      cairo_paint(context)
+      cairo_restore(context)
+    } else {
+      drawing.paint(root, in: context, clip: root.frame, damage: root.frame, motions: motions, now: now)
+    }
+    if trace {
+      let end = g_get_monotonic_time()
+      log("GTK paint \(Double(end - start) / 1000) end=\(end) repaint=\(damage?.width ?? 0)x\(damage?.height ?? 0)")
+    }
+  }
+
+  private func invalidateCanvas(_ rect: Rect? = nil) {
+    guard let rect else {
+      canvasDamage = Rect(x: 0, y: 0, width: Double(gtk_widget_get_allocated_width(canvas)),
+                          height: Double(gtk_widget_get_allocated_height(canvas)))
+      gtk_widget_queue_draw(canvas)
+      return
+    }
+    guard !rect.isEmpty else { return }
+    let x = floor(rect.minX), y = floor(rect.minY)
+    let damage = Rect(x: x, y: y, width: ceil(rect.maxX) - x, height: ceil(rect.maxY) - y)
+    if let previous = canvasDamage {
+      let left = min(previous.minX, x), top = min(previous.minY, y)
+      canvasDamage = Rect(x: left, y: top, width: max(previous.maxX, damage.maxX) - left,
+                          height: max(previous.maxY, damage.maxY) - top)
+    } else {
+      canvasDamage = damage
+    }
+    gtk_widget_queue_draw_area(canvas, pixels(x), pixels(y), pixels(damage.width), pixels(damage.height))
+  }
+
   private func publish(_ root: Element, damage: Rect? = nil) {
     self.root = root
+    let hadVisibleMotions = !motionDamage.isEmpty
     updateVisibleMotions(in: root)
     applying = true
     defer { applying = false }
@@ -211,13 +273,9 @@ public final class LinuxDrawingBackend: RenderBackend {
         gtk_widget_grab_focus(button.widget)
       }
     }
-    if let damage, motionDamage.isEmpty {
-      let x = floor(damage.minX), y = floor(damage.minY)
-      gtk_widget_queue_draw_area(canvas, pixels(x), pixels(y),
-                                 pixels(ceil(damage.maxX) - x), pixels(ceil(damage.maxY) - y))
-    } else {
-      gtk_widget_queue_draw(canvas)
-    }
+    // Moving controls can invalidate the whole GTK window. Track the pixels
+    // that actually changed so an expose only composites the cached canvas.
+    invalidateCanvas(!hadVisibleMotions && motionDamage.isEmpty ? damage : nil)
   }
 
   private func preparePublication(_ root: Element) {
@@ -246,11 +304,13 @@ public final class LinuxDrawingBackend: RenderBackend {
     }
     visit(root, animation: nil)
     prior = next
-    motions = motions.filter { next[$0.key] != nil }
+    motions = motions.filter { next[$0.key] != nil && $0.value.isActive(at: now) }
   }
 
   private func updateVisibleMotions(in root: Element) {
     motionDamage.removeAll(keepingCapacity: true)
+    let now = Date.timeIntervalSinceReferenceDate
+    motions = motions.filter { $0.value.isActive(at: now) }
     if !motions.isEmpty {
       func collect(_ node: Element, clip: Rect) {
         guard node.props.visible, !clip.isEmpty else { return }
@@ -283,12 +343,9 @@ public final class LinuxDrawingBackend: RenderBackend {
         let backend = Unmanaged<LinuxDrawingBackend>.fromOpaque(data).takeUnretainedValue()
         let now = Date.timeIntervalSinceReferenceDate
         for rect in backend.motionDamage.values {
-          gtk_widget_queue_draw_area(backend.canvas, pixels(floor(rect.minX)), pixels(floor(rect.minY)),
-                                     pixels(ceil(rect.width) + 1), pixels(ceil(rect.height) + 1))
+          backend.invalidateCanvas(rect)
         }
-        backend.motions = backend.motions.filter {
-          $0.value.animation.repeats || now < $0.value.start + $0.value.animation.duration
-        }
+        backend.motions = backend.motions.filter { $0.value.isActive(at: now) }
         backend.motionDamage = backend.motionDamage.filter { backend.motions[$0.key] != nil }
         if backend.motionDamage.isEmpty { backend.tick = 0; return 0 }
         return 1
@@ -448,7 +505,9 @@ public final class LinuxDrawingBackend: RenderBackend {
     flushPointer()
     let buttonID = type == 2 || type == 3 || type == 4 ? id : nil
     let handled = inputHandler?(buttonID, type, point, value, flags, "") == true
-    if trace { log("GTK input event=\(type) x=\(point.x) y=\(point.y) handled=\(handled)") }
+    if trace {
+      log("GTK input event=\(type) x=\(point.x) y=\(point.y) handled=\(handled) time=\(g_get_monotonic_time())")
+    }
     if control != nil && (type == 2 || type == 3 || type == 4) { return 1 }
     return handled ? 1 : 0
   }
@@ -512,6 +571,8 @@ private final class Activation {
     g_object_ref_sink(widget)
     gtk_style_context_add_provider(gtk_widget_get_style_context(widget), Self.style, 700)
     gtk_widget_set_opacity(widget, 0)
+    // This widget supplies input and accessibility. The canvas draws its pixels.
+    gtk_widget_set_redraw_on_allocate(widget, 0)
     gtk_fixed_put(host, widget, 0, 0)
     let data = Unmanaged.passUnretained(self).toOpaque()
     let activate: @convention(c) (Widget?, UnsafeMutableRawPointer?) -> Void = { _, data in
@@ -581,15 +642,22 @@ private final class Activation {
   }
 
   func updatePlacement(visible: Rect, enabled: Bool, accessibilityHidden: Bool) {
-    if placement != visible {
+    let shown: gboolean = !visible.isEmpty && !accessibilityHidden ? 1 : 0
+    if shown == 0, gtk_widget_get_visible(widget) != 0 { gtk_widget_hide(widget) }
+    if shown != 0, placement != visible {
+      let x = pixels(visible.minX), y = pixels(visible.minY)
+      let width = pixels(visible.width), height = pixels(visible.height)
+      if x != pixels(placement.minX) || y != pixels(placement.minY) {
+        gtk_fixed_move(host, widget, x, y)
+      }
+      if width != pixels(placement.width) || height != pixels(placement.height) {
+        gtk_widget_set_size_request(widget, width, height)
+      }
       placement = visible
-      gtk_fixed_move(host, widget, pixels(visible.minX), pixels(visible.minY))
-      gtk_widget_set_size_request(widget, pixels(visible.width), pixels(visible.height))
     }
     let sensitive: gboolean = enabled ? 1 : 0
     if gtk_widget_get_sensitive(widget) != sensitive { gtk_widget_set_sensitive(widget, sensitive) }
-    let shown: gboolean = !visible.isEmpty && !accessibilityHidden ? 1 : 0
-    if gtk_widget_get_visible(widget) != shown { gtk_widget_set_visible(widget, shown) }
+    if shown != 0, gtk_widget_get_visible(widget) == 0 { gtk_widget_show(widget) }
   }
 }
 

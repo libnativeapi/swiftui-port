@@ -24,6 +24,10 @@ final class LinuxDrawing {
     let animation: Animation
     let start: TimeInterval
 
+    func isActive(at now: TimeInterval) -> Bool {
+      animation.repeats || now < start + animation.duration
+    }
+
     func apply(to props: inout NodeProps, now: TimeInterval) -> CGPoint {
       let elapsed = max(0, (now - start) / animation.duration)
       var progress = animation.repeats ? elapsed.truncatingRemainder(dividingBy: 1) : min(1, elapsed)
@@ -115,12 +119,13 @@ final class LinuxDrawing {
         let spread = Double(layer) / 2
         let rect = Rect(x: frame.minX + shadow.x - spread, y: frame.minY + shadow.y - spread,
                         width: frame.width + spread * 2, height: frame.height + spread * 2)
-        shape(context, Path(roundedRect: rect.cgRect, cornerRadius: props.cornerRadius + spread),
-              fill: shadow.color.opacity(1 / Double(layers)), stroke: .clear, width: 0)
+        addRoundedRect(rect, radius: props.cornerRadius + spread, to: context)
+        source(context, shadow.color.opacity(1 / Double(layers)))
+        cairo_fill(context)
       }
     }
     if props.clipped {
-      add(Path(roundedRect: frame.cgRect, cornerRadius: props.cornerRadius), to: context)
+      addRoundedRect(frame, radius: props.cornerRadius, to: context)
       cairo_clip(context)
     }
     if let builder = node.clipPathBuilder {
@@ -137,8 +142,8 @@ final class LinuxDrawing {
       shape(context, props.path.transformed(x: frame.minX, y: frame.minY),
             fill: props.background ?? .clear, stroke: props.borderColor, width: props.borderWidth, dash: props.dash)
     } else if props.background != nil || props.borderWidth > 0 {
-      shape(context, Path(roundedRect: frame.cgRect, cornerRadius: props.cornerRadius),
-            fill: props.background ?? .clear, stroke: props.borderColor, width: props.borderWidth)
+      addRoundedRect(frame, radius: props.cornerRadius, to: context)
+      drawPath(context, fill: props.background ?? .clear, stroke: props.borderColor, width: props.borderWidth)
     }
     if node.kind == .gradient, let gradient = props.gradient {
       let pattern = cairo_pattern_create_linear(
@@ -167,14 +172,16 @@ final class LinuxDrawing {
       if content.frame.height > frame.height && frame.height > 0 {
         let height = max(20, frame.height * frame.height / content.frame.height)
         let y = frame.minY + props.scrollOffset.y / (content.frame.height - frame.height) * (frame.height - height)
-        shape(context, Path(roundedRect: CGRect(x: frame.maxX - 5, y: y, width: 4, height: height), cornerRadius: 2),
-              fill: color, stroke: .clear, width: 0)
+        addRoundedRect(Rect(x: frame.maxX - 5, y: y, width: 4, height: height), radius: 2, to: context)
+        source(context, color)
+        cairo_fill(context)
       }
       if content.frame.width > frame.width && frame.width > 0 {
         let width = max(20, frame.width * frame.width / content.frame.width)
         let x = frame.minX + props.scrollOffset.x / (content.frame.width - frame.width) * (frame.width - width)
-        shape(context, Path(roundedRect: CGRect(x: x, y: frame.maxY - 5, width: width, height: 4), cornerRadius: 2),
-              fill: color, stroke: .clear, width: 0)
+        addRoundedRect(Rect(x: x, y: frame.maxY - 5, width: width, height: 4), radius: 2, to: context)
+        source(context, color)
+        cairo_fill(context)
       }
     }
     if opacity < 1 {
@@ -245,11 +252,20 @@ final class LinuxDrawing {
   private func shape(_ context: OpaquePointer, _ path: Path, fill: Color, stroke: Color,
                             width: Double, dash: [Double] = []) {
     add(path, to: context)
+    drawPath(context, fill: fill, stroke: stroke, width: width, dash: dash)
+  }
+
+  private func drawPath(_ context: OpaquePointer, fill: Color, stroke: Color, width: Double, dash: [Double] = []) {
+    let hasStroke = width > 0 && stroke.opacity > 0
     if fill.opacity > 0 {
       source(context, fill)
+      if !hasStroke {
+        cairo_fill(context)
+        return
+      }
       cairo_fill_preserve(context)
     }
-    if width > 0, stroke.opacity > 0 {
+    if hasStroke {
       source(context, stroke)
       cairo_set_line_width(context, width)
       dash.withUnsafeBufferPointer { cairo_set_dash(context, $0.baseAddress, Int32($0.count), 0) }
@@ -257,6 +273,32 @@ final class LinuxDrawing {
     } else {
       cairo_new_path(context)
     }
+  }
+
+  private func addRoundedRect(_ rect: Rect, radius: Double, to context: OpaquePointer) {
+    cairo_new_path(context)
+    let r = min(radius, rect.width / 2, rect.height / 2)
+    if r < 0 {
+      add(Path(roundedRect: rect.cgRect, cornerRadius: radius), to: context)
+      return
+    }
+    let x = rect.minX, y = rect.minY, right = rect.maxX, bottom = rect.maxY
+    if r == 0 {
+      cairo_rectangle(context, x, y, rect.width, rect.height)
+      return
+    }
+    // Cubic approximation of a quarter circle, matching Path.addArc.
+    let inset = r * (1 - 4 / 3 * (sqrt(2.0) - 1))
+    cairo_move_to(context, x + r, y)
+    cairo_line_to(context, right - r, y)
+    cairo_curve_to(context, right - inset, y, right, y + inset, right, y + r)
+    cairo_line_to(context, right, bottom - r)
+    cairo_curve_to(context, right, bottom - inset, right - inset, bottom, right - r, bottom)
+    cairo_line_to(context, x + r, bottom)
+    cairo_curve_to(context, x + inset, bottom, x, bottom - inset, x, bottom - r)
+    cairo_line_to(context, x, y + r)
+    cairo_curve_to(context, x, y + inset, x + inset, y, x + r, y)
+    cairo_close_path(context)
   }
 
   private func add(_ path: Path, to context: OpaquePointer) {
