@@ -6,9 +6,9 @@ import XCTest
 @testable import SwiftUIRuntime
 
 final class FullRuntimeTests: XCTestCase {
-  private final class Model: ObservableObject {
+  private final class Model: SwiftUIRuntime.ObservableObject {
     static var constructions = 0
-    @Published var count = 0
+    @SwiftUIRuntime.Published var count = 0
     init() { Self.constructions += 1 }
   }
   private struct OwnedModel: View {
