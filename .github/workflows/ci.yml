@@ -8,11 +8,11 @@ on:
 permissions:
   contents: read
 
-# The nativeapi Swift binding carries Linux/Windows support on main
-# (libnativeapi/nativeapi#33).
+# Pin the workspace revision that exposes view update batching and scheduling.
+# See libnativeapi/nativeapi#34.
 env:
   NATIVEAPI_REPOSITORY: libnativeapi/nativeapi
-  NATIVEAPI_REF: main
+  NATIVEAPI_REF: c6f38de82db51582bd01cdd7024df105cb86c439
 
 jobs:
   runtime-macos:
@@ -126,10 +126,10 @@ jobs:
         run: swift --version
 
       - name: Build
-        run: swift build
+        run: swift build --build-system native
 
       - name: Test
-        run: swift test
+        run: swift test --build-system native
 
       - name: Smoke test
-        run: swift run Counter --smoke
+        run: swift run --build-system native Counter --smoke

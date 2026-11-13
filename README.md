@@ -47,30 +47,22 @@ against Apple's SwiftUI.
 
 ## What this is
 
-The engine keeps SwiftUI's authoring model — a `View` protocol with `body`,
-`@ViewBuilder`, `@State`/`@Binding`, stacks, modifiers and `WindowGroup` — and
-turns it into native control creation, insertion, removal, property updates and
-reordering. There is no custom drawing layer and no widget reimplementation:
-`Text` is a native label, `Button` is a native button, and stacks are native
-containers.
+The engine keeps SwiftUI's authoring model: value views, builders, state,
+bindings, scoped environment, modifiers and WindowGroup. Windows adds generic
+text/shape/layer drawing on a nativeapi window, including custom ButtonStyle
+labels. Buttons retain native handles, activation, focus and accessible names.
+Linux retains the native label/button/stack backend.
 
-The important consequence is stated up front: **the visual result is not
-identical to Apple SwiftUI.** nativeapi provides native desktop controls and a
-row/column layout engine; it has no drawing API, no animation system, no
-variable fonts and no rich text. See [docs/DIVERGENCES.md](docs/DIVERGENCES.md)
-before judging a screenshot against SwiftUI.
+This is a **partial compatibility layer**. It contains no host application's
+components, themes or tokens. It is not Apple's source or renderer, and does
+not promise pixel equality. Custom drawing currently requires Windows;
+the Windows backend supplies scrolling, vector images, native text editing,
+popovers, gestures and basic animation. It remains smaller than Apple SwiftUI.
+Read [docs/COMPAT.md](docs/COMPAT.md) and
+[docs/DIVERGENCES.md](docs/DIVERGENCES.md) before adopting an API.
 
-## What this is not
-
-- Not a reimplementation of SwiftUI's renderer, layout system or animation.
-- Not a source-level port: no Apple SwiftUI code is used or copied.
-- Not a macOS port. macOS already has SwiftUI; the port itself targets Windows
-  and Linux. The Counter example still builds on macOS, against Apple's SwiftUI,
-  as the same-source reference.
-- Not an embedded web view or a Flutter-like render engine. Real platform
-  controls are used.
-- Not a complete SwiftUI. The v0.1 symbol set is in
-  [docs/COMPAT.md](docs/COMPAT.md); everything else is explicitly missing.
+The port targets Windows and Linux. macOS applications and the Counter
+reference example use Apple's SwiftUI; runtime tests also build on macOS.
 
 ## Requirements
 
@@ -80,7 +72,8 @@ before judging a screenshot against SwiftUI.
   The package itself remains in language mode 5.
 - A [nativeapi](https://github.com/libnativeapi/nativeapi) checkout with the
   Swift binding's platform support. The package consumes it as a **sibling path
-  dependency** at `../nativeapi/bindings/swift`:
+  dependency** at `../nativeapi/bindings/swift`, or the path in
+  `NATIVEAPI_SWIFT_PATH`:
 
   ```text
   Projects/
@@ -88,11 +81,11 @@ before judging a screenshot against SwiftUI.
   └── swiftui-port/
   ```
 
-  The Swift binding's Linux/Windows support landed in
-  [libnativeapi/nativeapi#33](https://github.com/libnativeapi/nativeapi/pull/33),
-  so a current `main` checkout is enough. macOS builds `SwiftUIRuntime` for its
-  tests and the Counter example against Apple's SwiftUI; it does not need
-  nativeapi.
+  The Windows backend requires the view batching and update scheduling APIs
+  in [libnativeapi/nativeapi#34](https://github.com/libnativeapi/nativeapi/pull/34).
+  Use the nativeapi revision pinned in `.github/workflows/ci.yml` or a revision
+  that includes those APIs. macOS builds `SwiftUIRuntime` for its tests and the
+  Counter example against Apple's SwiftUI without a nativeapi dependency.
 - Linux: `pkg-config`, `libgtk-3-dev`, `libx11-dev`, `libxi-dev` (the binding
   gets its flags from pkg-config; no `unsafeFlags`).
 - Windows: the official Swift toolchain with the Visual Studio build tools the
@@ -119,6 +112,21 @@ swift test
 swift run Counter
 ```
 
+For the verified Windows source-build path (Swift 6.4.2, MSVC and Windows SDK),
+prepare nativeapi's source symlink and use the SwiftPM native builder:
+
+```powershell
+$env:NATIVEAPI_SWIFT_PATH = 'C:/src/nativeapi/bindings/swift'
+& "$env:NATIVEAPI_SWIFT_PATH/scripts/prepare-windows.ps1"
+swift build --build-system native
+swift test --build-system native
+swift run --build-system native Counter --smoke
+```
+
+Enable Windows Developer Mode if Git checked the core symlink out as a text
+file. Initialize nativeapi's `core` submodule first. Swift 6.4 warns that the
+native builder is deprecated; the commands above record the tested builder.
+
 On Windows and Linux, `swift run Counter --smoke` opens the window and asks the
 port's runner to quit a few seconds later; CI uses it to prove the window, event
 loop and renderer start. The window can also be closed normally. macOS runs the
@@ -128,7 +136,8 @@ example under Apple's SwiftUI, where the flag has no special meaning.
 
 ```
 Sources/SwiftUIRuntime/   view protocol, element tree, layout, diff, state
-Sources/SwiftUIPort/      NativeViewBackend + App/WindowGroup runner
+Sources/SwiftUIPort/      WindowsDrawingBackend, NativeViewBackend, app runner
+Sources/CSwiftUIWindows/  generic GDI+ display list and native button bridge
 Sources/SwiftUI/          facade: `import SwiftUI`
 Examples/Counter/         the README program
 Tests/SwiftUIRuntimeTests FakeBackend assertions for layout, diff and state
@@ -142,14 +151,12 @@ SwiftUI, and on Windows/Linux it compiles against the port's facade.
 
 ## Design in one paragraph
 
-A render pass evaluates `body` into an `Element` tree, resolves inherited
-foreground/disabled values, assigns diff keys (explicit `.id` or structural
-position), and runs a reference layout. The diff compares that tree with the
-mounted one and emits only the commands needed: `create`, `insert`, `remove`,
-`move`, `setProps`, `setFrame`. `NativeViewBackend` applies those commands to
-nativeapi views; `FakeBackend` records them so the engine is testable on macOS.
-Details and the nativeapi mapping table are in
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+A render pass evaluates bodies under scoped environment/state, resolves
+inherited properties, lays out the tree and diffs sibling identity. Backends
+receive incremental commands and the complete tree after diffing. Windows
+publishes a retained display list and updates native buttons using those
+frames; Linux applies nativeapi layout properties. FakeBackend records commands
+for platform-independent tests. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Compatibility
 

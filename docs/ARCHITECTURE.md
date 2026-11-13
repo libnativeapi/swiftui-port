@@ -2,225 +2,154 @@
 
 **Unofficial; not affiliated with Apple.**
 
-This document describes what the engine does, where the platform boundary is,
-and how a SwiftUI-shaped declaration becomes nativeapi view operations. The
-short version: the runtime computes an element tree and a reference layout, the
-diff emits a minimal command list, and a backend maps those commands onto real
-platform controls.
+## Modules and boundaries
 
-## Module graph
+- `SwiftUIRuntime`: platform-independent view values, builders, scoped
+  environment, state, element tree, layout and diff. No native API imports.
+- `SwiftUIPort`: nativeapi window/application lifecycle and platform backends.
+- `CSwiftUIWindows`: generic Win32/GDI+ drawing, text measurement, edit and button
+  painting, focus and tooltip bridge. Owns no application design tokens,
+  components or theme recipes. Borrows the window/button HWNDs owned by nativeapi and owns EDIT children.
+- `SwiftUI`: non-macOS facade exporting the two Swift modules.
 
-```
-                    +----------------------+
-   user code ------>|        SwiftUI       |   facade, non-macOS only
-                    | @_exported imports   |
-                    +----------+-----------+
-                               |
-              +----------------+----------------+
-              |                                 |
-     +--------v---------+              +--------v---------+
-     |   SwiftUIPort    |              |  SwiftUIRuntime  |
-     | NativeViewBackend|              |  element tree    |
-     | App / Window     |              |  layout / diff   |
-     | runner           |              |  state / builder |
-     +--------+---------+              +------------------+
-              |
-     +--------v---------+
-     |     NativeAPI    |
-     | nativeapi core   |
-     +------------------+
-```
+macOS builds runtime tests and the Counter example against Apple's SwiftUI.
+Windows/Linux use the facade. A host library owns its own components and
+styles; the compatibility layer implements only generic SwiftUI concepts.
 
-- **SwiftUIRuntime** is platform independent and imports no native API. It can
-  be built and tested on macOS without nativeapi.
-- **SwiftUIPort** imports `NativeAPI`, owns the window and application loop, and
-  implements the one real backend.
-- **SwiftUI** is the facade. On Windows and Linux it exports both lower modules
-  so `import SwiftUI` is sufficient. It is not built on macOS because a package
-  module may not shadow the system SwiftUI framework.
-- `SwiftUIPort` and `SwiftUI` are declared behind `#if !os(macOS)` in
-  `Package.swift`; the dependency on the nativeapi Swift package is declared in
-  the same condition.
-- `Counter` is declared on every platform. On macOS it has no package
-  dependency and imports Apple's SwiftUI, so `swift run Counter` demonstrates the
-  same example with the system framework. On Windows and Linux it depends on the
-  port's `SwiftUI` facade.
+## Render pass
 
-## A render pass
+1. Begin state collection. Install stored wrappers by structural path, concrete
+   view type and property position before evaluating each body.
+2. Track state reads while evaluating bodies and modifiers under scoped
+   EnvironmentValues. A local write invalidates its readers and ancestors;
+   unaffected branches retain their element trees, state and lifecycle entries.
+   ObservableObject and untracked geometry-state writes invalidate conservatively.
+3. Normalize fragments, retain both slots of view layers, and resolve inherited foreground, disabled, visibility and alpha values.
+4. Compute layout, evaluate geometry children, hoist presentations, prune state
+   and assign sibling diff keys. Windows
+   supplies a native text measurer; deterministic metrics serve engine tests.
+5. Diff against the mounted tree, retaining NodeIDs for matched elements.
+   Keys are local to sibling lists; an unchanged sibling order uses a linear
+   path without key dictionaries or move-list scans.
+6. Publish the updated tree and callbacks, send backend commands, then call
+   `didRender(root)`. Rendering guards coalesce writes made during a pass;
+   the Windows bridge batches deferred native notifications from a message turn.
 
-`Renderer` owns the mounted tree and does this for every pass:
+Commands are create, insert, remove, move, setProps and setFrame. Removing a
+node disposes its subtree. Actions are looked up by retained NodeID, so a
+native callback never needs an old body closure. Reentrant writes are coalesced
+into at most eight follow-up render passes.
 
-1. **Evaluate.** `_render(root, path: [])` walks `View.body` until it reaches a
-   primitive view. `@ViewBuilder` blocks become fragment elements; a container
-   flattens those fragments into its child list.
-2. **Normalize.** Fragments and `EmptyView`s are removed. A top-level fragment
-   with several children becomes a zero-spacing vertical container.
-3. **Resolve environment.** `.foregroundColor` and `.disabled` are inherited
-   down the tree. Explicit values on a descendant win; `.disabled(false)`
-   re-enables a subtree.
-4. **Assign keys.** Each element gets a diff key: an explicit `.id` value, or
-   `(parent key, child index, kind)` for structural identity.
-5. **Lay out.** `LayoutEngine` measures with fixed fake text metrics and writes
-   a reference frame into every element.
-6. **Diff.** The new tree is compared with the mounted tree. Matched elements
-   keep their `NodeID`; new elements get fresh IDs.
-7. **Emit.** The backend receives one ordered command list.
+## Windows backend
 
-The engine never re-creates a matched subtree just because an action closure
-was rebuilt. Actions are kept in a `[NodeID: () -> Void]` table inside the
-renderer and looked up by node ID when a native button fires.
+`WindowsDrawingBackend` sets nativeapi's content view to absolute layout and
+publishes a retained display list after each diff. The bridge reparents borrowed
+button HWNDs directly; NativeAPI retains their lifetime/events, while SwiftUI
+owns layout without enrolling controls in a second layout tree. Shapes and Text share the
+surface; padding/frame/layer nodes determine paint order and coordinates.
+Native BUTTON HWNDs are created only for new button IDs and retained across
+state, theme and resize changes. Removed controls unregister listeners and
+subclasses before disposal. The renderer remains alive through the native
+application loop.
 
-## Backend protocol
+`CSwiftUIWindows` subclasses the content HWND for buffered WM_PAINT. A retained
+physical-pixel DIB is shared by the host and owner-drawn buttons. Display-list
+comparison invalidates only changed ink bounds. Structural/clip/transform changes
+repaint their common enclosing clip, or the full viewport when none is available.
+Painting clips to the accumulated damage and reuses bounded font resources.
+ScrollView controls share a fixed viewport and translated content HWND, including
+nested scroll views. Scrolling moves the content host instead of every button;
+viewport clipping and Tab eligibility keep offscreen controls out of input.
+Translations use DeferWindowPos without intermediate redraws. The content host
+copies the shared framebuffer once per damaged frame; independent EDITs and
+unstyled buttons retain native painting. Styled buttons can also copy their
+rectangle for native exposure/print messages. The native control still
+handles mouse capture, Space activation, enabled state and BN_CLICKED. The
+bridge adds Enter activation, ordered Tab navigation, hover/pressed/focus
+callbacks, rounded hit regions and tooltips. EDIT notifications update bindings
+after the native message unwinds, so a render can safely remove old controls.
+Deferred focus events are checked against current HWND focus. Host events route
+scrolling, gestures and shortcuts through the renderer. No global input is injected.
 
-```swift
-public protocol RenderBackend: AnyObject {
-  func perform(_ commands: [RenderCommand])
-  var tapHandler: ((NodeID) -> Void)? { get set }
-}
-```
+Only controls intersecting the viewport acquire native handles; existing handles
+remain retained when scrolled away. Unchanged labels, frames, z-order and hit
+regions skip native mutations. Local button regions exclude clipping already
+performed by their viewport, so scrolling does not rebuild per-button HRGNs.
+Offscreen text/images/shapes and transparent
+layout boxes do not generate drawing commands. Lazy containers still construct
+all children initially; local state can reuse their unchanged branches.
+A focused container chooses one
+native descendant, rather than requesting focus on every child.
 
-Commands:
+`App.main` configures per-monitor V2 DPI awareness before application/window
+initialization. Embedders should call `WindowsDrawingBackend.prepareApplication()`
+before creating native windows, or provide their own DPI-aware application manifest.
+All geometry is in logical points. Painting scales using GetDpiForWindow;
+the drawing bridge converts borrowed button frames to the same device coordinates. Native text
+measurement uses the same font choice as painting. Resize uses the window's
+content size, not the event's decorated frame size. Framebuffer copies specify
+both rectangles in pixels, avoiding GDI+'s implicit image-DPI scaling. Display
+lists publish after native control updates, so intermediate messages still paint
+the previous complete frame.
 
-| command | meaning |
-|---|---|
-| `create(id, kind, props)` | make a native control or container for this element |
-| `insert(id, parent, index)` | attach it; `parent == nil` means the window content view |
-| `remove(id)` | detach and dispose a whole subtree |
-| `move(id, parent, index)` | reattach an existing view at a new sibling position |
-| `setProps(id, props)` | update text/colors/visibility/layout properties in place |
-| `setFrame(id, frame)` | the reference frame changed (only the root is applied by the native backend) |
+The backend's activate/nativeButton/advanceFocus methods allow integration
+tests scoped to their own controls. Public core API and generated bindings
+are unchanged by this drawing backend.
 
-A pass emits removals first, then creates/inserts/moves in new sibling order,
-then property updates, then frame changes. A move is one command, not a
-remove/create pair.
+## Linux backend
 
-`FakeBackend` records commands and lets tests assert the exact sequence. It is
-also what makes the engine testable on macOS without a native window.
+`NativeViewBackend` consumes incremental commands and maps stacks/padding to
+nativeapi row/column containers, Text to Label, and Button to Button. Native
+layout determines child frames; only the root reference frame is applied.
+Frames map to wrapper preferred sizes. Drawing-only nodes fail explicitly.
+The full limitations of both backends are in [DIVERGENCES.md](DIVERGENCES.md).
 
-## Identity and diffing
+## State, layout and testing
 
-Two kinds of identity exist:
+State uses a process-wide registry for one renderer. Bindings are get/set
+closures; focus bindings wrap State. Environment values are saved/restored
+around subtrees. `.id` and ForEach identifiers scope both diff identity and stored state.
+Published values invalidate the active renderer; StateObject initialization is lazy.
+Writes from one action or native notification batch are published together.
+ScrollView retains its stored content when only its internal offset changes.
+Lifecycle callbacks commit after mounting, and the Windows timer services tasks
+and a limited set of animated drawing properties.
 
-- **Explicit**: `.id(value)` makes the element's key that value. It is global
-  within the tree, so reordering siblings by id emits a move.
-- **Structural**: without an explicit id, the key is the parent's key plus the
-  child's index and kind. Inserting at the front shifts every following key, so
-  those siblings are recreated. This matches SwiftUI's structural identity
-  intuition, and `.id` is the escape hatch.
+Stack measurement sums main-axis sizes and takes the largest cross-axis size.
+Padding adds insets; frames constrain/alignment-place a child; layers measure
+the base view only. Flexible frames/spacers consume remaining proposed space.
+This is deliberately smaller than SwiftUI's layout system.
+Measurements are cached by proposal and sizing inputs. Placement snapshots copy
+geometry into the new tree without replacing callbacks or visual properties.
+Unchanged evaluation revisions reuse mounted subtrees when inherited properties
+also match. Moving them translates their frames; resizing reflows them. Their
+diffs and key assignment are skipped only while geometry remains unchanged.
+Changed text, fonts, constraints, alignment, scroll offsets and child identities
+invalidate the relevant caches. Opaque custom layout/guide closures take the
+conservative path. GeometryReader snapshots retain state and
+lifecycle registrations when reused; size changes re-evaluate their content.
+Readers of global/named positions re-evaluate when coordinates change, while
+escaped proxies keep current coordinates after cached translation. Obsolete
+layout cache entries are reclaimed every eight passes; changing the text
+measurer or fallback metrics clears them immediately.
 
-The sibling diff:
+Integer-pixel scrolls can reuse the framebuffer's interior. The bridge verifies
+that visible paint commands and their clip stacks are exact translations, that
+the backdrop is uniform, and that no stationary overlay intersects the copy.
+Exposed strips, edges and scroll indicators repaint. Content edits, fractional
+pixel shifts, transforms, complex backgrounds and unpainted intermediate frames
+fall back to normal drawing. Pixel regression tests compare reuse with fresh
+rendering, including alpha, text, reverse scrolling and unsafe cases.
 
-1. Removes old keys that no longer exist (one command per subtree).
-2. Walks the new children left to right. A matched key at the wrong position
-   emits one `move`. A genuinely new key emits `create` + `insert` for its
-   subtree. A matched key whose `kind` changed emits `remove` + `create`,
-   because a `Text` cannot be mutated into a `Button` in place.
-3. Emits `setProps` only when the effective props differ; `setFrame` only when
-   the reference frame differs.
-
-v0.1 does **not** move an element across different parents even if its explicit
-id matches. Such an element is removed from the old parent and created under the
-new one. See [DIVERGENCES.md](DIVERGENCES.md).
-
-## Layout: reference and native
-
-There are two layouts, on purpose:
-
-- The **reference layout** in `SwiftUIRuntime` measures text with fixed metrics
-  (8 pt per character, 20 pt line height by default), applies stack spacing,
-  cross-axis alignment, padding and frame overrides. Tests assert these numbers,
-  and the root frame comes from this pass.
-- The **native layout** is nativeapi's row/column engine. It measures real
-  platform controls, distributes `flex` to spacers, and positions children
-  according to each child's alignment. This is what the user sees.
-
-`NativeViewBackend` therefore maps the *declarative layout properties* (layout
-axis, spacing, padding, flex, alignment, preferred size) rather than replaying
-every reference frame. The root is the exception: the engine knows the window
-content size, so the backend applies the root frame and updates it when the
-window resizes. Applying reference frames to every child would fight the native
-layout pass.
-
-The two layouts agree on the v0.1 subset (top-to-bottom, left-to-right,
-spacing, padding, spacers, preferred sizes) but not on text width or on native
-control insets. That is expected.
-
-## Nativeapi mapping
-
-`Sources/SwiftUIPort/NativeViewBackend.swift` maps:
-
-| Engine | nativeapi | Notes |
-|---|---|---|
-| `VStack` | `View` with `ViewLayout.Column` | spacing via `setSpacing`; each child gets `setAlignment` from the stack alignment |
-| `HStack` | `View` with `ViewLayout.Row` | same, with top/center/bottom mapped to start/center/end |
-| `.padding(...)` | plain `View` with `Column` layout, `setPadding` | an explicit wrapper, so background-before/after-padding keeps its order |
-| `Text` | `Label` | `setText`, `setTextColor` |
-| `Button` | `Button` | `setText`; click listener calls `tapHandler` |
-| `Spacer` | `View` with `setFlex(1)` | takes leftover main-axis space |
-| `.frame(width:height:)` | `setPreferredSize` | `0` means "intrinsic" in nativeapi |
-| `.background(color)` | `setBackgroundColor` | |
-| `.foregroundColor(color)` | `Label.setTextColor` | Text only; `Button` has no text-color API |
-| `.hidden()` | `setVisible(false)` | nativeapi skips invisible children in layout |
-| `.disabled(...)` | `setEnabled(false)` | resolved down the tree by the engine |
-| root element | `Window.contentView.addSubview` + `setFrame` | updated on window resize |
-| window resize | `Window` `resized` event | `Renderer.resize(to:)` |
-| button click | `ButtonClickedEvent` | `Renderer.performTap(id)` |
-
-All NativeAPI names in `SwiftUIPort` are fully qualified (`NativeAPI.View`,
-`NativeAPI.Size`, `NativeAPI.Color`, ...) because `SwiftUIRuntime` also defines
-`Color`, `Size`, `Point` and `EdgeInsets`.
-
-## State
-
-`@State` writes must survive the fact that `body` is re-evaluated and view
-values are re-created. The runtime uses a process-wide `StateRegistry`:
-
-- When a `@State` wrapper is initialized it registers a slot
-  `(scope, ordinal)`.
-- `scope` is the structural path of the body currently being evaluated.
-- `ordinal` resets at the start of each body evaluation, so the same view value
-  constructed in the same position finds the same slot.
-- A write calls the renderer's `onChange`, which marks the tree dirty. The
-  renderer finishes the current pass first, then re-renders (coalescing up to
-  eight passes to avoid a loop).
-
-`@Binding` is a get/set pair; it does not store anything. The parent passes
-`$value`, the child mutates it, and the write goes through the same state slot
-and invalidation path.
-
-This is deliberately smaller than SwiftUI's property-wrapper system. State is
-tied to construction position, not to an explicit `.id`; it is not pruned when
-a subtree disappears; `@StateObject`, `@ObservedObject`, `@EnvironmentObject`
-and `@Environment` are not implemented. See
-[DIVERGENCES.md](DIVERGENCES.md).
-
-## App and window lifecycle
-
-`@main` resolves to `App.main()` in `SwiftUIPort`:
-
-1. Evaluate `app.body` to a `Scene`, which must be a `WindowGroup`.
-2. Create a native `Window`, set its title and an initial content size.
-3. Construct the root view under the root `@State` scope.
-4. Create `NativeViewBackend`, mount the renderer, show the window.
-5. Listen for window resize, then call `Application.runWithWindow(window)`.
-6. When the window closes, the platform loop returns and `main()` exits.
-
-With `--smoke`, a background thread waits three seconds and calls
-`Application.quit(0)`. nativeapi dispatches that to the UI thread, so the CI
-smoke test exercises the real event loop rather than a special headless path.
-
-## Testing
-
-`Tests/SwiftUIRuntimeTests` has four groups:
-
-- `LayoutTests`: fake metrics, stacks, spacers, padding, frames, inheritance.
-- `DiffTests`: mount counts, prop-only updates, append/insert/remove, reorder
-  by `.id`, kind replacement, and an unchanged tree producing no commands.
-- `StateTests`: `@State` writes re-render and only update props; `@Binding`
-  flows back to the parent; resize changes the root frame.
-- `COMPATTests`: scans `docs/COMPAT.md` and the sources so the compatibility
-  table cannot silently drift from the code.
-
-The tests use `FakeBackend`, never a real window. macOS CI runs this suite and
-builds `Counter` against Apple's SwiftUI (without launching the GUI); Linux and
-Windows additionally build the port's backend and run the Counter smoke test.
+The runtime suite covers layout, diffing, state lifetime, environment scope,
+custom modifiers, button styles and compatibility documentation. Native apps
+can use the Windows backend to test real HWND activation and stable handles.
+`Counter --smoke` opens a real window and exits after three seconds, exercising
+the native application loop. Test metrics and actual font measurements are
+distinct: headless assertions are not pixel conformance claims.
+`Renderer.lastTimings` reports evaluation, environment, layout, finalization,
+diff and backend publication in milliseconds; actual native painting is measured
+separately by host integration benchmarks. Compare like build configurations.
+`WindowsDrawingBackend.lastTimings` separates preparation, display-list recording,
+control synchronization and publication. `lastPaintTimings` reports raster/copy
+CPU time and paint count; `lastReusedPixels` reports successful scroll reuse.

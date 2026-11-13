@@ -1,4 +1,6 @@
 // swift-tools-version:5.9
+
+import Foundation
 import PackageDescription
 
 // SwiftUIPort — a declarative SwiftUI-shaped API over nativeapi's native views.
@@ -20,37 +22,63 @@ import PackageDescription
 // a path dependency: this project is not published to a package registry.
 
 #if os(macOS)
-let packageDependencies: [Package.Dependency] = []
+  let packageDependencies: [Package.Dependency] = []
 #else
-let packageDependencies: [Package.Dependency] = [
-  .package(name: "NativeAPI", path: "../nativeapi/bindings/swift")
-]
+  let packageDependencies: [Package.Dependency] = [
+    .package(
+      name: "NativeAPI",
+      path: ProcessInfo.processInfo.environment["NATIVEAPI_SWIFT_PATH"]
+        ?? "../nativeapi/bindings/swift")
+  ]
 #endif
 
 var targets: [Target] = [
-  .target(name: "SwiftUIRuntime")
+  .target(
+    name: "SwiftUIRuntime",
+    linkerSettings: [
+      // Deep declarative view trees exceed Windows' 1 MiB default in debug builds.
+      .unsafeFlags(["-Xlinker", "/STACK:16777216"], .when(platforms: [.windows]))
+    ])
 ]
 
+#if os(Windows)
+  targets.append(
+    .target(
+      name: "CSwiftUIWindows", dependencies: [.product(name: "CNativeAPI", package: "NativeAPI")],
+      publicHeadersPath: "include",
+      linkerSettings: [.linkedLibrary("gdiplus"), .linkedLibrary("comctl32")]))
+  let drawingDependencies: [Target.Dependency] = ["CSwiftUIWindows"]
+  targets.append(
+    .target(
+      name: "CSwiftUIWindowsTestSupport", dependencies: ["CSwiftUIWindows"],
+      path: "Tests/CSwiftUIWindowsTestSupport", publicHeadersPath: "include"))
+  targets.append(
+    .testTarget(
+      name: "WindowsDrawingTests", dependencies: ["CSwiftUIWindowsTestSupport", "SwiftUIPort"]))
+#else
+  let drawingDependencies: [Target.Dependency] = []
+#endif
+
 #if !os(macOS)
-targets += [
-  .target(
-    name: "SwiftUIPort",
-    dependencies: [
-      "SwiftUIRuntime",
-      .product(name: "NativeAPI", package: "NativeAPI"),
-    ]
-  ),
-  .target(
-    name: "SwiftUI",
-    dependencies: ["SwiftUIRuntime", "SwiftUIPort"]
-  ),
-]
+  targets += [
+    .target(
+      name: "SwiftUIPort",
+      dependencies: [
+        "SwiftUIRuntime",
+        .product(name: "NativeAPI", package: "NativeAPI"),
+      ] + drawingDependencies
+    ),
+    .target(
+      name: "SwiftUI",
+      dependencies: ["SwiftUIRuntime", "SwiftUIPort"]
+    ),
+  ]
 #endif
 
 #if os(macOS)
-let counterDependencies: [Target.Dependency] = []
+  let counterDependencies: [Target.Dependency] = []
 #else
-let counterDependencies: [Target.Dependency] = ["SwiftUI"]
+  let counterDependencies: [Target.Dependency] = ["SwiftUI"]
 #endif
 
 targets.append(
@@ -60,27 +88,24 @@ targets.append(
     path: "Examples/Counter"
   )
 )
-
 targets.append(
   .testTarget(
     name: "SwiftUIRuntimeTests",
     dependencies: ["SwiftUIRuntime"]
   )
 )
-
 var products: [Product] = [
   .library(name: "SwiftUIRuntime", targets: ["SwiftUIRuntime"])
 ]
 
 #if !os(macOS)
-products += [
-  .library(name: "SwiftUIPort", targets: ["SwiftUIPort"]),
-  .library(name: "SwiftUI", targets: ["SwiftUI"]),
-]
+  products += [
+    .library(name: "SwiftUIPort", targets: ["SwiftUIPort"]),
+    .library(name: "SwiftUI", targets: ["SwiftUI"]),
+  ]
 #endif
 
 products.append(.executable(name: "Counter", targets: ["Counter"]))
-
 let package = Package(
   name: "SwiftUIPort",
   platforms: [.macOS(.v11)],

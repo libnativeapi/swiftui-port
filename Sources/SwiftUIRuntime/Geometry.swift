@@ -1,9 +1,24 @@
-import Foundation
-
 /// A point in a view's coordinate space.
 ///
 /// The origin is the top-left corner of the containing view, matching
 /// nativeapi's view geometry.
+import Foundation
+
+/// A width/height pair in logical points.
+
+/// An axis-aligned rectangle in the parent's coordinate space.
+
+/// Per-edge padding values in logical points.
+
+/// A horizontal alignment inside a vertical stack, and the horizontal
+/// component of ``Alignment``.
+
+/// A vertical alignment inside a horizontal stack, and the vertical component
+/// of ``Alignment``.
+
+/// A two-axis alignment, used by ``View/frame(width:height:alignment:)``.
+
+/// Which axis a stack lays its children out on.
 public struct Point: Equatable {
   public var x: Double
   public var y: Double
@@ -15,8 +30,6 @@ public struct Point: Equatable {
 
   public static let zero = Point()
 }
-
-/// A width/height pair in logical points.
 public struct Size: Equatable {
   public var width: Double
   public var height: Double
@@ -30,8 +43,6 @@ public struct Size: Equatable {
 
   public var isEmpty: Bool { width <= 0 || height <= 0 }
 }
-
-/// An axis-aligned rectangle in the parent's coordinate space.
 public struct Rect: Equatable {
   public var origin: Point
   public var size: Size
@@ -64,8 +75,6 @@ public struct Rect: Equatable {
     )
   }
 }
-
-/// Per-edge padding values in logical points.
 public struct EdgeInsets: Equatable {
   public var top: Double
   public var leading: Double
@@ -101,24 +110,18 @@ public struct EdgeInsets: Equatable {
     )
   }
 }
-
-/// A horizontal alignment inside a vertical stack, and the horizontal
-/// component of ``Alignment``.
 public enum HorizontalAlignment: Equatable {
   case leading
   case center
   case trailing
 }
-
-/// A vertical alignment inside a horizontal stack, and the vertical component
-/// of ``Alignment``.
 public enum VerticalAlignment: Equatable {
   case top
   case center
   case bottom
+  public static let firstTextBaseline: VerticalAlignment = .center
+  public static let lastTextBaseline: VerticalAlignment = .center
 }
-
-/// A two-axis alignment, used by ``View/frame(width:height:alignment:)``.
 public struct Alignment: Equatable {
   public var horizontal: HorizontalAlignment
   public var vertical: VerticalAlignment
@@ -138,9 +141,12 @@ public struct Alignment: Equatable {
   public static let bottomLeading = Alignment(horizontal: .leading, vertical: .bottom)
   public static let bottomTrailing = Alignment(horizontal: .trailing, vertical: .bottom)
 }
-
-/// Which axis a stack lays its children out on.
 public enum Axis: Equatable {
+  public struct Set: OptionSet, Equatable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    public static let horizontal = Set(rawValue: 1), vertical = Set(rawValue: 2)
+  }
   case horizontal
   case vertical
 }
