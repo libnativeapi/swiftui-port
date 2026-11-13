@@ -1,6 +1,6 @@
 import Foundation
+
 import NativeAPI
-import SwiftUIRuntime
 
 /// The real backend: maps engine elements onto nativeapi's native views.
 ///
@@ -9,6 +9,8 @@ import SwiftUIRuntime
 /// container with padding. The engine's reference frames are used for the root
 /// only; nested frames are left to nativeapi's own layout pass, which is the
 /// authoritative one at runtime.
+import SwiftUIRuntime
+
 public final class NativeViewBackend: RenderBackend {
   public var tapHandler: ((NodeID) -> Void)?
   public var onResize: ((SwiftUIRuntime.Size) -> Void)?
@@ -91,9 +93,14 @@ public final class NativeViewBackend: RenderBackend {
         guard case .buttonClicked = event else { return }
         self?.tapHandler?(id)
       }
-    case .container, .padding, .empty:
+    case .container, .padding, .frame, .empty:
       guard let container = NativeAPI.View.create() else { return }
       view = container
+    case .layer, .shape, .styledButton, .presentation, .grid, .zStack, .scroll, .geometry,
+      .customLayout, .textField, .image, .path, .gradient:
+      preconditionFailure(
+        "Custom drawing and ButtonStyle require WindowsDrawingBackend; this backend supports native controls only"
+      )
     case .spacer:
       guard let spacer = NativeAPI.View.create() else { return }
       spacer.setFlex(1)
@@ -149,7 +156,7 @@ public final class NativeViewBackend: RenderBackend {
       view.setPadding(props.padding.nativeInsets)
       view.setFlex(props.flex)
       applyAlignmentToChildren(parent: id)
-    case .padding:
+    case .padding, .frame:
       view.setLayout(.column)
       view.setSpacing(0)
       view.setPadding(props.padding.nativeInsets)
@@ -158,7 +165,8 @@ public final class NativeViewBackend: RenderBackend {
     case .spacer:
       view.setFlex(1)
       view.setAlignment(.stretch)
-    case .empty, .fragment:
+    case .empty, .fragment, .shape, .layer, .styledButton, .presentation, .grid, .zStack, .scroll,
+      .geometry, .customLayout, .textField, .image, .path, .gradient:
       break
     }
   }
@@ -237,9 +245,9 @@ public final class NativeViewBackend: RenderBackend {
 
   private func applyAlignment(to childID: NodeID, parent: NodeID?) {
     guard let parent,
-          let parentKind = kinds[parent],
-          let parentProps = propsByID[parent],
-          let childView = handles[childID]
+      let parentKind = kinds[parent],
+      let parentProps = propsByID[parent],
+      let childView = handles[childID]
     else { return }
 
     let alignment: NativeAPI.ViewAlignment?
@@ -285,7 +293,6 @@ public final class NativeViewBackend: RenderBackend {
     }
   }
 }
-
 extension SwiftUIRuntime.Color {
   var nativeColor: NativeAPI.Color {
     NativeAPI.Color.fromRgba(
@@ -296,7 +303,6 @@ extension SwiftUIRuntime.Color {
     )
   }
 }
-
 extension SwiftUIRuntime.EdgeInsets {
   var nativeInsets: NativeAPI.EdgeInsets {
     NativeAPI.EdgeInsets(top: top, right: trailing, bottom: bottom, left: leading)

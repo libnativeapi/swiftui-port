@@ -1,4 +1,11 @@
 /// Allocates a fresh ``NodeID`` for a newly created element.
+
+/// Emits the commands that build a brand-new subtree.
+
+/// Reconciles one old/new pair and returns the mounted new element.
+
+/// Reconciles a sibling list, emitting one remove per vanished subtree, one
+/// move per reordered key, and a create/insert only for genuinely new keys.
 struct NodeIDAllocator {
   private var next = 1
 
@@ -7,8 +14,6 @@ struct NodeIDAllocator {
     return NodeID(rawValue: next)
   }
 }
-
-/// Emits the commands that build a brand-new subtree.
 func createSubtree(
   _ element: Element,
   parent: NodeID?,
@@ -34,8 +39,6 @@ func createSubtree(
   }
   return result
 }
-
-/// Reconciles one old/new pair and returns the mounted new element.
 func diffElement(
   old: Element?,
   new: Element,
@@ -66,6 +69,7 @@ func diffElement(
       allocator: &allocator
     )
   }
+  if new.reusesLayout && old.id == new.id && old.frame == new.frame { return new }
 
   var result = new
   result.id = old.id
@@ -86,9 +90,6 @@ func diffElement(
   )
   return result
 }
-
-/// Reconciles a sibling list, emitting one remove per vanished subtree, one
-/// move per reordered key, and a create/insert only for genuinely new keys.
 func diffChildren(
   old: [Element],
   new: [Element],
@@ -96,6 +97,15 @@ func diffChildren(
   commands: inout [RenderCommand],
   allocator: inout NodeIDAllocator
 ) -> [Element] {
+  // State/style changes normally preserve the sibling order. Avoid building
+  // key dictionaries and scanning a move list for every wrapper in that case.
+  if old.count == new.count && zip(old, new).allSatisfy({ $0.key == $1.key }) {
+    return new.indices.map { index in
+      diffElement(
+        old: old[index], new: new[index], parent: parent, index: index,
+        commands: &commands, allocator: &allocator)
+    }
+  }
   var oldByKey: [ElementKey: Element] = [:]
   for child in old where oldByKey[child.key] == nil {
     oldByKey[child.key] = child

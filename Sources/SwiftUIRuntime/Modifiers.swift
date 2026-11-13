@@ -1,25 +1,27 @@
-/// A set of edges for the `padding(_:_:)` modifier.
-///
-/// SwiftUI spells this `Edge.Set`; this port uses a standalone `Edge` option
-/// set because the exact nested spelling is not part of the v0.1 symbol list.
-public struct Edge: OptionSet, Hashable {
-  public let rawValue: Int
-
-  public init(rawValue: Int) {
-    self.rawValue = rawValue
-  }
-
-  public static let top = Edge(rawValue: 1 << 0)
-  public static let leading = Edge(rawValue: 1 << 1)
-  public static let bottom = Edge(rawValue: 1 << 2)
-  public static let trailing = Edge(rawValue: 1 << 3)
-
-  public static let horizontal: Edge = [.leading, .trailing]
-  public static let vertical: Edge = [.top, .bottom]
-  public static let all: Edge = [.top, .leading, .bottom, .trailing]
-}
+/// An individual edge and the set accepted by padding.
 
 /// One chainable modifier application.
+
+/// The view returned by a modifier. It renders its content and then folds the
+/// modifier into the resulting element.
+///
+/// Padding and frames create wrapper elements to preserve modifier order.
+/// Scalar properties are attached to the current node.
+
+import Foundation
+
+public enum Edge {
+  case top, leading, bottom, trailing
+  public struct Set: OptionSet, Hashable {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    public static let top = Set(rawValue: 1), leading = Set(rawValue: 2)
+    public static let bottom = Set(rawValue: 4), trailing = Set(rawValue: 8)
+    public static let horizontal: Set = [.leading, .trailing]
+    public static let vertical: Set = [.top, .bottom]
+    public static let all: Set = [.top, .leading, .bottom, .trailing]
+  }
+}
 enum ViewModifierValue {
   case padding(EdgeInsets)
   case frame(width: Double?, height: Double?, alignment: Alignment)
@@ -30,15 +32,6 @@ enum ViewModifierValue {
   case onTapGesture(() -> Void)
   case id(AnyHashable)
 }
-
-/// The view returned by a modifier. It renders its content and then folds the
-/// modifier into the resulting element.
-///
-/// `.padding` is the one modifier that creates a new wrapper element, because
-/// nativeapi has no per-control padding. Everything else updates the element's
-/// properties. This means modifier order is preserved for padding versus
-/// background/frame, while other combinations (for example
-/// `.hidden().padding()`) collapse into the same element.
 public struct ModifiedView<Content: View>: View {
   public typealias Body = Never
 
@@ -52,19 +45,32 @@ public struct ModifiedView<Content: View>: View {
 
   public var body: Never { fatalError("ModifiedView is a primitive view") }
 }
-
 extension ModifiedView: _PrimitiveView {
   func _makeElement(path: [Int]) -> Element {
-    var element = _render(content, path: path)
+    let saved = EnvironmentValues.current
+    if case .disabled(let disabled) = modifier {
+      EnvironmentValues.current.isEnabled = !disabled
+    }
+    let renderPath: [Int]
+    if case .id(let value) = modifier {
+      renderPath = path + [value.hashValue]
+    } else {
+      renderPath = path
+    }
+    var element = _render(content, path: renderPath)
+    EnvironmentValues.current = saved
 
     switch modifier {
     case .padding(let insets):
       var props = NodeProps()
       props.padding = insets
       element = Element(kind: .padding, props: props, children: [element])
-    case .frame(let width, let height, _):
-      element.props.frameWidth = width
-      element.props.frameHeight = height
+    case .frame(let width, let height, let alignment):
+      var props = NodeProps()
+      props.frameWidth = width
+      props.frameHeight = height
+      props.alignment = alignment
+      element = Element(kind: .frame, props: props, children: [element])
     case .background(let color):
       element.props.background = color
     case .foregroundColor(let color):
@@ -74,9 +80,7 @@ extension ModifiedView: _PrimitiveView {
     case .disabled(let disabled):
       element.props.disabledOverride = disabled
     case .onTapGesture(let action):
-      // nativeapi only exposes a click event on Button. Attaching a tap
-      // gesture to a Button replaces its action; on other views it is kept
-      // for diagnostics but cannot fire. See docs/DIVERGENCES.md.
+      // Windows routes both native button and host hit-test activation here.
       element.action = action
     case .id(let value):
       element.explicitID = value
@@ -85,20 +89,19 @@ extension ModifiedView: _PrimitiveView {
     return element
   }
 }
-
-public extension View {
+extension View {
   /// Pads every edge by `value`.
-  func padding(_ value: Double) -> some View {
+  public func padding(_ value: Double) -> some View {
     padding(EdgeInsets.all(value))
   }
 
   /// Pads by explicit per-edge values.
-  func padding(_ insets: EdgeInsets) -> some View {
+  public func padding(_ insets: EdgeInsets) -> some View {
     ModifiedView(content: self, modifier: .padding(insets))
   }
 
   /// Pads only the selected edges.
-  func padding(_ edges: Edge, _ value: Double) -> some View {
+  public func padding(_ edges: Edge.Set, _ value: Double) -> some View {
     var insets = EdgeInsets.zero
     if edges.contains(.top) { insets.top = value }
     if edges.contains(.leading) { insets.leading = value }
@@ -109,24 +112,26 @@ public extension View {
 
   /// Constrains the view's preferred size.
   ///
-  /// There is no per-view alignment layout in nativeapi; `alignment` is
-  /// accepted for source compatibility and currently only affects the frame
-  /// metadata. See docs/DIVERGENCES.md.
-  func frame(
-    width: Double? = nil,
-    height: Double? = nil,
+  /// Windows aligns the child inside an explicit frame wrapper. The Linux
+  /// backend maps this to native preferred sizing. See docs/DIVERGENCES.md.
+  public func frame(
+    width: CGFloat? = nil,
+    height: CGFloat? = nil,
     alignment: Alignment = .center
   ) -> some View {
-    ModifiedView(content: self, modifier: .frame(width: width, height: height, alignment: alignment))
+    ModifiedView(
+      content: self,
+      modifier: .frame(
+        width: width.map { Double($0) }, height: height.map { Double($0) }, alignment: alignment))
   }
 
   /// Draws `color` behind the view, including its padding if applied earlier.
-  func background(_ color: Color) -> some View {
+  public func background(_ color: Color) -> some View {
     ModifiedView(content: self, modifier: .background(color))
   }
 
   /// Sets the text color for this view and its descendants.
-  func foregroundColor(_ color: Color) -> some View {
+  public func foregroundColor(_ color: Color) -> some View {
     ModifiedView(content: self, modifier: .foregroundColor(color))
   }
 
@@ -134,12 +139,12 @@ public extension View {
   ///
   /// nativeapi removes invisible views from stack layout, so unlike SwiftUI a
   /// hidden view does not reserve its space. See docs/DIVERGENCES.md.
-  func hidden() -> some View {
+  public func hidden() -> some View {
     ModifiedView(content: self, modifier: .hidden)
   }
 
   /// Disables this view and its descendants.
-  func disabled(_ disabled: Bool = true) -> some View {
+  public func disabled(_ disabled: Bool = true) -> some View {
     ModifiedView(content: self, modifier: .disabled(disabled))
   }
 
@@ -147,7 +152,7 @@ public extension View {
   ///
   /// Only buttons carry a click event in nativeapi v0.1, so this is effective
   /// on a `Button` (replacing its action) and inert elsewhere.
-  func onTapGesture(perform action: @escaping () -> Void) -> some View {
+  public func onTapGesture(perform action: @escaping () -> Void) -> some View {
     ModifiedView(content: self, modifier: .onTapGesture(action))
   }
 
@@ -155,7 +160,28 @@ public extension View {
   ///
   /// Elements with the same id keep their native view when they move among
   /// siblings. v0.1 does not move a view across different parents.
-  func id<ID: Hashable>(_ id: ID) -> some View {
+  public func id<ID: Hashable>(_ id: ID) -> some View {
     ModifiedView(content: self, modifier: .id(AnyHashable(id)))
+  }
+}
+extension View {
+  public func frame(
+    minWidth: CGFloat? = nil, idealWidth: CGFloat? = nil, maxWidth: CGFloat? = nil,
+    minHeight: CGFloat? = nil, idealHeight: CGFloat? = nil, maxHeight: CGFloat? = nil,
+    alignment: Alignment = .center
+  ) -> some View {
+    TransformView(content: self) { element in
+      var props = NodeProps()
+      props.minWidth = minWidth.map { Double($0) }
+      props.minHeight = minHeight.map { Double($0) }
+      props.idealWidth = idealWidth.map { Double($0) }
+      props.idealHeight = idealHeight.map { Double($0) }
+      props.maxWidth = maxWidth.map { Double($0) }
+      props.maxHeight = maxHeight.map { Double($0) }
+      props.fillWidth = maxWidth == .infinity
+      props.fillHeight = maxHeight == .infinity
+      props.alignment = alignment
+      element = Element(kind: .frame, props: props, children: [element])
+    }
   }
 }

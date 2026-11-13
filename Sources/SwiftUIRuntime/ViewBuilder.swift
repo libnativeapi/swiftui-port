@@ -5,7 +5,18 @@
 /// same `if` / `switch` / `for` forms compile. A block with several children
 /// becomes a ``TupleView`` fragment; containers flatten fragments when they
 /// collect their children.
+
+/// A fragment of zero or more elements, produced by a multi-expression builder
+/// block. Containers flatten it before laying out their children.
+
+/// The zero-or-one element fragment produced by an `if` without an `else`.
+
+/// The selected branch of a `switch` or `if`/`else` in a builder block.
+
+/// The fragment produced by a `for` loop in a builder block.
+
 @resultBuilder
+@MainActor @preconcurrency
 public enum ViewBuilder {
   public static func buildExpression<V: View>(_ expression: V) -> V {
     expression
@@ -164,11 +175,13 @@ public enum ViewBuilder {
     OptionalView(component)
   }
 
-  public static func buildEither<T: View, F: View>(first component: T) -> _ConditionalContent<T, F> {
+  public static func buildEither<T: View, F: View>(first component: T) -> _ConditionalContent<T, F>
+  {
     .first(component)
   }
 
-  public static func buildEither<T: View, F: View>(second component: F) -> _ConditionalContent<T, F> {
+  public static func buildEither<T: View, F: View>(second component: F) -> _ConditionalContent<T, F>
+  {
     .second(component)
   }
 
@@ -176,28 +189,22 @@ public enum ViewBuilder {
     ArrayView(components)
   }
 }
-
-/// A fragment of zero or more elements, produced by a multi-expression builder
-/// block. Containers flatten it before laying out their children.
 public struct TupleView: View {
   public typealias Body = Never
 
-  private let builder: ([Int]) -> [Element]
+  private let builder: @MainActor ([Int]) -> [Element]
 
-  init(_ builder: @escaping ([Int]) -> [Element]) {
+  init(_ builder: @escaping @MainActor ([Int]) -> [Element]) {
     self.builder = builder
   }
 
   public var body: Never { fatalError("TupleView is a fragment") }
 }
-
 extension TupleView: _PrimitiveView {
   func _makeElement(path: [Int]) -> Element {
     Element(kind: .fragment, children: builder(path))
   }
 }
-
-/// The zero-or-one element fragment produced by an `if` without an `else`.
 public struct OptionalView<Content: View>: View {
   public typealias Body = Never
 
@@ -209,7 +216,6 @@ public struct OptionalView<Content: View>: View {
 
   public var body: Never { fatalError("OptionalView is a fragment") }
 }
-
 extension OptionalView: _PrimitiveView {
   func _makeElement(path: [Int]) -> Element {
     guard let content else {
@@ -218,8 +224,6 @@ extension OptionalView: _PrimitiveView {
     return Element(kind: .fragment, children: [_render(content, path: path)])
   }
 }
-
-/// The selected branch of a `switch` or `if`/`else` in a builder block.
 public enum _ConditionalContent<TrueContent: View, FalseContent: View>: View {
   case first(TrueContent)
   case second(FalseContent)
@@ -228,7 +232,6 @@ public enum _ConditionalContent<TrueContent: View, FalseContent: View>: View {
 
   public var body: Never { fatalError("_ConditionalContent is a fragment") }
 }
-
 extension _ConditionalContent: _PrimitiveView {
   func _makeElement(path: [Int]) -> Element {
     switch self {
@@ -239,8 +242,6 @@ extension _ConditionalContent: _PrimitiveView {
     }
   }
 }
-
-/// The fragment produced by a `for` loop in a builder block.
 public struct ArrayView<Content: View>: View {
   public typealias Body = Never
 
@@ -252,7 +253,6 @@ public struct ArrayView<Content: View>: View {
 
   public var body: Never { fatalError("ArrayView is a fragment") }
 }
-
 extension ArrayView: _PrimitiveView {
   func _makeElement(path: [Int]) -> Element {
     Element(

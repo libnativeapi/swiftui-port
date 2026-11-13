@@ -1,16 +1,18 @@
-@testable import SwiftUIRuntime
-
 /// Evaluates a view exactly the way the renderer's build pass does.
-func makeTree<V: View>(_ view: V, size: Size) -> Element {
-  var element = normalize(_render(view, path: []))
-  resolveEnvironment(&element)
-  assignKeys(&element, parent: .root, index: 0)
-  LayoutEngine().layout(root: &element, in: size)
-  return element
-}
+@testable import SwiftUIRuntime
 
 /// Mounts `old` and diffs `new` against it, returning the mounted new tree and
 /// the commands the backend would receive.
+
+@MainActor @preconcurrency
+func makeTree<V: View>(_ view: V, size: Size) -> Element {
+  var element = normalize(_render(view, path: []))
+  resolveEnvironment(&element)
+  assignKeys(&element)
+  LayoutEngine().layout(root: &element, in: size)
+  return element
+}
+@MainActor @preconcurrency
 func diffTrees<V1: View, V2: View>(
   old: V1,
   new: V2,
@@ -36,7 +38,6 @@ func diffTrees<V1: View, V2: View>(
   )
   return (mounted, updated, commands)
 }
-
 func findNode(in element: Element, kind: ElementKind) -> Element? {
   if element.kind == kind { return element }
   for child in element.children {
@@ -44,7 +45,6 @@ func findNode(in element: Element, kind: ElementKind) -> Element? {
   }
   return nil
 }
-
 func findNode(in element: Element, text: String) -> Element? {
   if element.props.text == text { return element }
   for child in element.children {
@@ -52,15 +52,12 @@ func findNode(in element: Element, text: String) -> Element? {
   }
   return nil
 }
-
 func allNodes(_ element: Element) -> [Element] {
   [element] + element.children.flatMap(allNodes)
 }
-
 func count(_ commands: [RenderCommand], where predicate: (RenderCommand) -> Bool) -> Int {
   commands.filter(predicate).count
 }
-
 extension RenderCommand {
   var isCreate: Bool {
     if case .create = self { return true }

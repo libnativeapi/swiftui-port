@@ -3,7 +3,8 @@
 /// The native backend converts this to `NativeAPI.Color`; keeping a separate
 /// type is what lets `SwiftUIRuntime` stay free of nativeapi imports. Color
 /// components are 0...1; values outside the range are clamped when converted.
-public struct Color: Hashable {
+
+public struct Color: Hashable, Sendable {
   public var red: Double
   public var green: Double
   public var blue: Double
@@ -42,4 +43,17 @@ public struct Color: Hashable {
   public static let purple = Color(red: 0.5, green: 0, blue: 0.5)
   public static let gray = Color(white: 0.5)
   public static let secondary = Color(white: 0.35)
+}
+extension Color: View {
+  public var body: some View { ShapeView(radius: 0, fill: self) }
+}
+extension Color {
+  public enum RGBColorSpace { case sRGB }
+  public init(_ space: RGBColorSpace, red: Double, green: Double, blue: Double, opacity: Double = 1)
+  {
+    self.init(red: red, green: green, blue: blue, opacity: opacity)
+  }
+  public func opacity(_ value: Double) -> Color {
+    Color(red: red, green: green, blue: blue, opacity: opacity * value)
+  }
 }

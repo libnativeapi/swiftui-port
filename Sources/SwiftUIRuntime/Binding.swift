@@ -4,6 +4,7 @@
 /// passes `$value`. Reads and writes go straight to the owner's storage, so a
 /// write marks the renderer dirty exactly as a direct `@State` write does.
 @propertyWrapper
+@dynamicMemberLookup
 public struct Binding<Value> {
   private let getter: () -> Value
   private let setter: (Value) -> Void
@@ -19,6 +20,16 @@ public struct Binding<Value> {
   }
 
   public var projectedValue: Binding<Value> { self }
+
+  public subscript<Member>(dynamicMember key: WritableKeyPath<Value, Member>) -> Binding<Member> {
+    Binding<Member>(
+      get: { wrappedValue[keyPath: key] },
+      set: {
+        var value = wrappedValue
+        value[keyPath: key] = $0
+        wrappedValue = value
+      })
+  }
 
   /// A binding that ignores writes. Reads always return `value`.
   public static func constant(_ value: Value) -> Binding<Value> {
