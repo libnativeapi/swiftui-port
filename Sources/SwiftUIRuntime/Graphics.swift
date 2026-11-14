@@ -262,7 +262,7 @@ public struct Image: View, _PrimitiveView {
   }
   func _makeElement(path: ViewPath) -> Element {
     var p = NodeProps()
-    #if os(WASI)
+    #if os(WASI) || SWIFTUI_PORT_HARMONY
       p.imagePath = name
     #else
       let resources = bundle ?? .main
