@@ -5,6 +5,6 @@
 @_exported import SwiftUIRuntime
 #if os(WASI)
   @_exported import SwiftUIWeb
-#else
+#elseif !SWIFTUI_PORT_HARMONY
   @_exported import SwiftUIPort
 #endif

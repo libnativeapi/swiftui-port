@@ -1,0 +1,9 @@
+.hvigor/
+oh_modules/
+oh-package-lock.json5
+local.properties
+build/
+entry/.cxx/
+entry/libs/
+entry/src/main/resources/rawfile/fluent/
+__pycache__/
